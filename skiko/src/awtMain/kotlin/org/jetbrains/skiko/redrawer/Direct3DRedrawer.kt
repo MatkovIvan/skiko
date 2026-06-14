@@ -10,13 +10,16 @@ import org.jetbrains.skiko.*
 import org.jetbrains.skiko.context.Direct3DContextHandler
 
 internal class Direct3DRedrawer(
-    private val layer: SkiaLayer,
+    private val layer: SkiaPanel,
     analytics: SkiaLayerAnalytics,
     private val properties: SkiaLayerProperties
 ) : AWTRedrawer(layer, analytics, GraphicsApi.DIRECT3D) {
 
-    private val contextHandler = Direct3DContextHandler(layer)
+    private val contextHandler = Direct3DContextHandler(this, properties.gpuResourceCacheLimit, layer.pixelGeometry, layer::draw)
     override val renderInfo: String get() = contextHandler.rendererInfo()
+
+    @OptIn(ExperimentalSkikoApi::class)
+    override val renderContext: RenderContext get() = contextHandler
 
     private var drawLock = Any()
     private var isSwapChainInitialized = false
@@ -44,7 +47,7 @@ internal class Direct3DRedrawer(
             .takeIf { it != 0L } ?: throw RenderException("Failed to create DirectX12 device.")
     }
 
-    private val frameDispatcher = FrameDispatcher(MainUIDispatcher) {
+    private val frameExecutor = RenderExecutor {
         if (layer.isShowing) {
             update()
             draw()
@@ -56,7 +59,7 @@ internal class Direct3DRedrawer(
     }
 
     override fun dispose() = synchronized(drawLock) {
-        frameDispatcher.cancel()
+        frameExecutor.close()
         contextHandler.dispose()
         disposeDevice(device)
         device = 0L
@@ -65,7 +68,7 @@ internal class Direct3DRedrawer(
 
     override fun needRender(throttledToVsync: Boolean) {
         checkDisposed()
-        frameDispatcher.scheduleFrame()
+        frameExecutor.scheduleFrame()
     }
 
     override fun renderImmediately() {
@@ -128,6 +131,13 @@ internal class Direct3DRedrawer(
     // Called from native code
     private fun isAdapterSupported(name: String) = isVideoCardSupported(GraphicsApi.DIRECT3D, hostOs, name)
 
+    internal fun adapterPointer(): Long = getDirectXAdapterPointer(device)
+    internal fun devicePointer(): Long = getDirectXDevicePointer(device)
+    internal fun queuePointer(): Long = getDirectXQueuePointer(device)
+
+    private external fun getDirectXAdapterPointer(device: Long): Long
+    private external fun getDirectXDevicePointer(device: Long): Long
+    private external fun getDirectXQueuePointer(device: Long): Long
     private external fun chooseAdapter(adapterPriority: Int): Long
     private external fun createDirectXDevice(adapter: Long, contentHandle: Long, transparency: Boolean): Long
     private external fun makeDirectXContext(device: Long): Long

@@ -1,7 +1,6 @@
 package org.jetbrains.skiko.swing
 
 import org.jetbrains.skia.BackendRenderTarget
-import org.jetbrains.skia.Color
 import org.jetbrains.skia.ColorSpace
 import org.jetbrains.skia.DirectContext
 import org.jetbrains.skia.PixelGeometry
@@ -20,30 +19,18 @@ import org.jetbrains.skiko.autoreleasepool
 import org.jetbrains.skiko.chooseMetalAdapter
 import org.jetbrains.skiko.dispose
 import org.jetbrains.skiko.swing.SharedTexturesAdapter.Companion.createSharedTexturesAdapter
-import java.awt.Graphics2D
 
 /**
- * Provides a way to draw on Skia canvas rendered off-screen with Metal
- * GPU acceleration and then pass it to [java.awt.Graphics2D]. It provides
- * better interoperability with Swing, but it is less efficient than
- * on-screen rendering.
+ * Offscreen Metal surface for the Swing-composited path. Provides the per-API offscreen surface; the
+ * shared clear/draw/flush/blit orchestration lives in [SwingRedrawerBase].
  *
- * For now, it uses drawing to [java.awt.image.BufferedImage] that cause
- * VRAM <-> RAM memory transfer and so increased CPU usage.
- *
- * Content to draw is provided by [SkikoRenderDelegate].
- *
- * For on-screen rendering see
- * [org.jetbrains.skiko.redrawer.MetalRedrawer].
- *
- * @see SwingRedrawerBase
- * @see SoftwareSwingPainter
+ * For on-screen rendering see [org.jetbrains.skiko.redrawer.MetalRedrawer].
  */
 internal class MetalSwingRedrawer(
     swingLayerProperties: SwingLayerProperties,
-    private val renderDelegate: SkikoRenderDelegate,
+    renderDelegate: SkikoRenderDelegate,
     analytics: SkiaLayerAnalytics
-) : SwingRedrawerBase(swingLayerProperties, analytics, GraphicsApi.METAL) {
+) : SwingRedrawerBase(swingLayerProperties, renderDelegate, analytics, GraphicsApi.METAL) {
     companion object {
         init {
             Library.load()
@@ -69,7 +56,7 @@ internal class MetalSwingRedrawer(
         onContextInit(context)
     }
 
-    private val painter: SwingPainter = createSwingPainter(swingLayerProperties)
+    override val painter: SwingPainter = createSwingPainter(swingLayerProperties)
 
     override fun dispose() {
         disposeMetalTexture(texturePtr)
@@ -79,11 +66,7 @@ internal class MetalSwingRedrawer(
         super.dispose()
     }
 
-    override fun onRender(g: Graphics2D, width: Int, height: Int, nanoTime: Long) {
-        if (width < 1 || height < 1) {
-            return
-        }
-
+    override fun renderOffscreen(width: Int, height: Int, draw: (surface: Surface, texturePtr: Long) -> Unit) {
         require(width <= adapter.maxTextureSize && height <= adapter.maxTextureSize) {
             "Texture dimensions must be less than maximum allowed size: ${adapter.maxTextureSize}, got $width x $height"
         }
@@ -101,17 +84,13 @@ internal class MetalSwingRedrawer(
                     SurfaceProps(pixelGeometry = PixelGeometry.UNKNOWN)
                 )?.autoClose() ?: throw RenderException("Cannot create surface")
 
-                val canvas = surface.canvas
-                canvas.clear(Color.TRANSPARENT)
-                renderDelegate.onRender(canvas, width, height, nanoTime)
-                flush(surface, g)
+                draw(surface, texturePtr)
             }
         }
     }
 
-    private fun flush(surface: Surface, g: Graphics2D) {
+    override fun flushSurface(surface: Surface) {
         surface.flushAndSubmit(syncCpu = true)
-        painter.paint(g, surface, texturePtr)
     }
 
     override fun rendererInfo(): String {

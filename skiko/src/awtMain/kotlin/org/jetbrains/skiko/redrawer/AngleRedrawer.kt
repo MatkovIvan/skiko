@@ -6,7 +6,7 @@ import org.jetbrains.skiko.*
 import org.jetbrains.skiko.context.AngleContextHandler
 
 internal class AngleRedrawer(
-    private val layer: SkiaLayer,
+    private val layer: SkiaPanel,
     analytics: SkiaLayerAnalytics,
     private val properties: SkiaLayerProperties
 ) : AWTRedrawer(layer, analytics, GraphicsApi.ANGLE) {
@@ -18,8 +18,11 @@ internal class AngleRedrawer(
         }
     }
 
-    private val contextHandler = AngleContextHandler(layer)
+    private val contextHandler = AngleContextHandler(this, properties.gpuResourceCacheLimit, layer.pixelGeometry, layer::draw)
     override val renderInfo: String get() = contextHandler.rendererInfo()
+
+    @OptIn(ExperimentalSkikoApi::class)
+    override val renderContext: RenderContext get() = contextHandler
 
     private var drawLock = Any()
 
@@ -31,7 +34,7 @@ internal class AngleRedrawer(
             return field
         }
 
-    private val frameDispatcher = FrameDispatcher(MainUIDispatcher) {
+    private val frameExecutor = RenderExecutor {
         if (layer.isShowing) {
             update(System.nanoTime())
             draw()
@@ -41,7 +44,7 @@ internal class AngleRedrawer(
     private val adapterName get() = AngleApi.glGetString(AngleApi.GL_RENDERER)
 
     init {
-        device = layer.backedLayer.useDrawingSurfacePlatformInfo { platformInfo ->
+        device = layer.requireBackedLayer.useDrawingSurfacePlatformInfo { platformInfo ->
             createAngleDevice(platformInfo, layer.transparency).takeIf { it != 0L }
                 ?: throw RenderException("Failed to create ANGLE device.")
         }
@@ -55,7 +58,7 @@ internal class AngleRedrawer(
     }
 
     override fun dispose() = synchronized(drawLock) {
-        frameDispatcher.cancel()
+        frameExecutor.close()
         makeCurrent(device)
         contextHandler.dispose()
         disposeDevice(device)
@@ -65,7 +68,7 @@ internal class AngleRedrawer(
 
     override fun needRender(throttledToVsync: Boolean) {
         checkDisposed()
-        frameDispatcher.scheduleFrame()
+        frameExecutor.scheduleFrame()
     }
 
     override fun renderImmediately() {

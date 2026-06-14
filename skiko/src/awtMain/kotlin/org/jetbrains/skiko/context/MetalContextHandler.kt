@@ -1,31 +1,32 @@
 package org.jetbrains.skiko.context
 
 import org.jetbrains.skia.*
-import org.jetbrains.skiko.LayerDrawScope
+import org.jetbrains.skiko.GraphicsApi
 import org.jetbrains.skiko.Logger
 import org.jetbrains.skiko.MetalAdapter
 import org.jetbrains.skiko.RenderException
-import org.jetbrains.skiko.SkiaLayer
 import org.jetbrains.skiko.redrawer.MetalDevice
 
 /**
- * Provides a way to draw on Skia canvas created in [layer] bounds using Metal GPU acceleration.
+ * Provides a way to draw on a Skia canvas backed by a Metal [device] using GPU acceleration.
  *
- * For each [ContextHandler.draw] request it initializes Skia Canvas with Metal context and
- * draws [SkiaLayer.draw] content in this canvas.
+ * For each [ContextHandler.draw] request it initializes a Skia Canvas with a Metal context and
+ * rasterizes [drawContent] into it.
  *
  * @see "src/awtMain/objectiveC/macos/MetalContextHandler.mm" -- native implementation
  */
 internal class MetalContextHandler(
-    layer: SkiaLayer,
     private val device: MetalDevice,
-    private val adapter: MetalAdapter
-) : ContextBasedContextHandler(layer, "Metal") {
-    override fun LayerDrawScope.initCanvas() {
-        disposeCanvas()
+    private val adapter: MetalAdapter,
+    gpuResourceCacheLimit: Long,
+    pixelGeometry: PixelGeometry,
+    drawContent: Canvas.() -> Unit
+) : ContextBasedContextHandler(GraphicsApi.METAL, pixelGeometry, gpuResourceCacheLimit, "Metal", drawContent) {
+    internal val metalDeviceObjcPtr: Long get() = getMetalDevicePointer(device.ptr)
+    internal val metalCommandQueueObjcPtr: Long get() = getMetalCommandQueuePointer(device.ptr)
 
-        val width = scaledLayerWidth
-        val height = scaledLayerHeight
+    override fun initCanvas(width: Int, height: Int) {
+        disposeCanvas()
 
         if (width > 0 && height > 0) {
             renderTarget = makeRenderTarget(width, height)
@@ -47,8 +48,8 @@ internal class MetalContextHandler(
         }
     }
 
-    override fun flush(scope: LayerDrawScope) {
-        super.flush(scope)
+    override fun present() {
+        context?.flush()
         surface?.flushAndSubmit()
         finishFrame()
         Logger.debug { "MetalContextHandler finished drawing frame" }
@@ -73,4 +74,6 @@ internal class MetalContextHandler(
     private external fun makeMetalContext(device: Long): Long
     private external fun makeMetalRenderTarget(device: Long, width: Int, height: Int): Long
     private external fun finishFrame(device: Long)
+    private external fun getMetalDevicePointer(device: Long): Long
+    private external fun getMetalCommandQueuePointer(device: Long): Long
 }

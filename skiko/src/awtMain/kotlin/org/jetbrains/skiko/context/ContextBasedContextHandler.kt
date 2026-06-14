@@ -1,10 +1,18 @@
 package org.jetbrains.skiko.context
 
+import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.DirectContext
+import org.jetbrains.skia.PixelGeometry
+import org.jetbrains.skiko.GraphicsApi
 import org.jetbrains.skiko.Logger
-import org.jetbrains.skiko.SkiaLayer
 
-internal abstract class ContextBasedContextHandler(layer: SkiaLayer, val name: String) : JvmContextHandler(layer) {
+internal abstract class ContextBasedContextHandler(
+    renderApi: GraphicsApi,
+    pixelGeometry: PixelGeometry,
+    gpuResourceCacheLimit: Long,
+    val name: String,
+    drawContent: Canvas.() -> Unit
+) : JvmContextHandler(renderApi, pixelGeometry, gpuResourceCacheLimit, drawContent) {
 
     protected abstract fun makeContext(): DirectContext
 

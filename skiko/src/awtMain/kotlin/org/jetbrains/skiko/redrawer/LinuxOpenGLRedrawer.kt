@@ -5,7 +5,7 @@ import org.jetbrains.skiko.*
 import org.jetbrains.skiko.context.OpenGLContextHandler
 
 internal class LinuxOpenGLRedrawer(
-    private val layer: SkiaLayer,
+    private val layer: SkiaPanel,
     analytics: SkiaLayerAnalytics,
     private val properties: SkiaLayerProperties
 ) : AWTRedrawer(layer, analytics, GraphicsApi.OPENGL) {
@@ -13,14 +13,17 @@ internal class LinuxOpenGLRedrawer(
         loadOpenGLLibrary()
     }
 
-    private val contextHandler = OpenGLContextHandler(layer)
+    private val contextHandler = OpenGLContextHandler(properties.gpuResourceCacheLimit, layer.pixelGeometry, layer::draw)
     override val renderInfo: String get() = contextHandler.rendererInfo()
+
+    @OptIn(ExperimentalSkikoApi::class)
+    override val renderContext: RenderContext get() = contextHandler
 
     private var context = 0L
     private val swapInterval = if (properties.isVsyncEnabled) 1 else 0
 
     init {
-    	layer.backedLayer.lockLinuxDrawingSurface {
+    	layer.requireBackedLayer.lockLinuxDrawingSurface {
             context = it.createContext(layer.transparency)
             if (context == 0L) {
                 throw RenderException("Cannot create Linux GL context")
@@ -44,7 +47,7 @@ internal class LinuxOpenGLRedrawer(
     private var frameLimit = 0.0
     private val frameLimiter = layerFrameLimiter(
         CoroutineScope(frameJob),
-        layer.backedLayer,
+        layer.requireBackedLayer,
         onNewFrameLimit = { frameLimit = it }
     )
 
@@ -62,7 +65,7 @@ internal class LinuxOpenGLRedrawer(
     override fun dispose() {
         checkDisposed()
         frameJob.cancel()
-        layer.backedLayer.lockLinuxDrawingSurface {
+        layer.requireBackedLayer.lockLinuxDrawingSurface {
             // makeCurrent is mandatory to destroy context, otherwise, OpenGL will destroy wrong context (from another window).
             // see the official example: https://www.khronos.org/opengl/wiki/Tutorial:_OpenGL_3.0_Context_Creation_(GLX)
             it.makeCurrent(context)
@@ -78,7 +81,7 @@ internal class LinuxOpenGLRedrawer(
         frameDispatcher.scheduleFrame()
     }
 
-    override fun renderImmediately() = layer.backedLayer.lockLinuxDrawingSurface {
+    override fun renderImmediately() = layer.requireBackedLayer.lockLinuxDrawingSurface {
         checkDisposed()
         update()
         inDrawScope {
@@ -108,6 +111,9 @@ internal class LinuxOpenGLRedrawer(
             .filterNot(LinuxOpenGLRedrawer::isDisposed)
             .filter { it.layer.isShowing }
 
+        // Deliberately a single static FrameDispatcher (not a per-instance RenderExecutor): it batches all
+        // on-screen GL windows into one frame and coalesces a single vsync across monitors. A per-instance
+        // executor would regress this — 5 windows would each wait for vsync separately.
         private val frameDispatcher = FrameDispatcher(MainUIDispatcher) {
             toRedrawCopy.addAll(toRedraw)
             toRedraw.clear()
@@ -124,7 +130,7 @@ internal class LinuxOpenGLRedrawer(
                 }
             }
 
-            val drawingSurfaces = toRedrawVisible.associateWith { lockLinuxDrawingSurface(it.layer.backedLayer) }
+            val drawingSurfaces = toRedrawVisible.associateWith { lockLinuxDrawingSurface(it.layer.requireBackedLayer) }
             try {
                 for (redrawer in toRedrawVisible) {
                     drawingSurfaces[redrawer]!!.makeCurrent(redrawer.context)

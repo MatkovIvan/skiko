@@ -3,7 +3,11 @@ package org.jetbrains.skiko.context
 import org.jetbrains.skia.*
 import org.jetbrains.skiko.*
 
-internal class OpenGLContextHandler(layer: SkiaLayer) : ContextBasedContextHandler(layer, "OpenGL") {
+internal class OpenGLContextHandler(
+    gpuResourceCacheLimit: Long,
+    pixelGeometry: PixelGeometry,
+    drawContent: Canvas.() -> Unit
+) : ContextBasedContextHandler(GraphicsApi.OPENGL, pixelGeometry, gpuResourceCacheLimit, "OpenGL", drawContent) {
 
     override fun makeContext() = makeGLContext()
 
@@ -18,9 +22,9 @@ internal class OpenGLContextHandler(layer: SkiaLayer) : ContextBasedContextHandl
         return false
     }
 
-    override fun LayerDrawScope.initCanvas() {
-        val w = scaledLayerWidth
-        val h = scaledLayerHeight
+    override fun initCanvas(width: Int, height: Int) {
+        val w = width
+        val h = height
 
         if (isSizeChanged(w, h) || surface == null) {
             disposeCanvas()

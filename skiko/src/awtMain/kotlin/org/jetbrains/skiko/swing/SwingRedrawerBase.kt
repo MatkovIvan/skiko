@@ -1,26 +1,32 @@
 package org.jetbrains.skiko.swing
 
-import org.jetbrains.skia.*
+import org.jetbrains.skia.DirectContext
+import org.jetbrains.skia.Surface
 import org.jetbrains.skiko.*
+import org.jetbrains.skiko.context.rasterizeFrame
 import org.jetbrains.skiko.SkiaLayerAnalytics.DeviceAnalytics
 import java.awt.Graphics2D
 import java.util.concurrent.CancellationException
 import javax.swing.SwingUtilities
 
 /**
- * Provides a base implementation of drawing [SkikoRenderDelegate] content on [java.awt.Graphics2D]
+ * Base for the offscreen (Swing-composited) per-API render path.
  *
- * Each [redraw] request is handled in a following way:
- *   1. For the first request initialize native GPU context using [createDirectContext]
- *   2. Create [org.jetbrains.skia.Canvas] where content should be drawn using [initCanvas]
- *   3. Acquire drawing "commands" using [SkikoRenderDelegate]
- *   4. Flush these commands on [java.awt.Graphics2D] using [flush]
- *
- * All the steps are performed synchronously on EDT.
+ * This base owns the draw orchestration — clear the offscreen surface, play the content in through the
+ * shared draw atom ([rasterizeFrame], also used by the on-screen `ContextHandler`), flush, then blit onto
+ * [Graphics2D] via [SwingPainter]. It records the content **straight into the offscreen surface canvas**:
+ * there is no producer on another thread to hand a picture across, so a picture round-trip here would just
+ * be an extra allocation. (A consumer that wants the picture boundary uses [RenderContext] directly.)
+ * Subclasses contribute only the API-specific pieces:
+ *  - [renderOffscreen]: acquire/reuse the per-API offscreen [Surface] (+ its native texture pointer) and
+ *    invoke the supplied draw block within any API render scope it needs;
+ *  - [flushSurface]: the API-specific submit/await;
+ *  - [painter]: how the result is blitted onto [Graphics2D].
  */
 @OptIn(ExperimentalSkikoApi::class)
 internal abstract class SwingRedrawerBase(
     private val swingLayerProperties: SwingLayerProperties,
+    private val renderDelegate: SkikoRenderDelegate,
     private val analytics: SkiaLayerAnalytics,
     private val graphicsApi: GraphicsApi
 ) : SwingRedrawer {
@@ -34,7 +40,19 @@ internal abstract class SwingRedrawerBase(
         rendererAnalytics.init()
     }
 
-    protected abstract fun onRender(g: Graphics2D, width: Int, height: Int, nanoTime: Long)
+    /** How the rasterized offscreen [Surface] is blitted onto [Graphics2D]. */
+    protected abstract val painter: SwingPainter
+
+    /**
+     * Acquire (or reuse) the per-API offscreen [Surface] of [width] x [height], then call [draw] with it
+     * and the native texture pointer for the accelerated blit (0 when there is none). Any API render
+     * scope / lifetime management (e.g. GL make-current brackets, autoclose of transient resources)
+     * happens here, around [draw].
+     */
+    protected abstract fun renderOffscreen(width: Int, height: Int, draw: (surface: Surface, texturePtr: Long) -> Unit)
+
+    /** API-specific flush/submit of [surface] (e.g. flushAndSubmit + completion wait). */
+    protected abstract fun flushSurface(surface: Surface)
 
     override fun dispose() {
         require(!isDisposed) { "$javaClass is disposed" }
@@ -48,7 +66,16 @@ internal abstract class SwingRedrawerBase(
             val scale = swingLayerProperties.scale
             val width = (swingLayerProperties.width * scale).toInt().coerceAtLeast(0)
             val height = (swingLayerProperties.height * scale).toInt().coerceAtLeast(0)
-            onRender(g, width, height, System.nanoTime())
+            if (width < 1 || height < 1) return@inDrawScope
+
+            val nanoTime = System.nanoTime()
+            renderOffscreen(width, height) { surface, texturePtr ->
+                surface.canvas.rasterizeFrame {
+                    renderDelegate.onRender(this, width, height, nanoTime)
+                }
+                flushSurface(surface)
+                painter.paint(g, surface, texturePtr)
+            }
         }
     }
 

@@ -3,13 +3,13 @@ package org.jetbrains.skiko.redrawer
 import org.jetbrains.skia.impl.interopScope
 import org.jetbrains.skia.impl.InteropPointer
 import org.jetbrains.skia.SurfaceProps
-import org.jetbrains.skiko.SkiaLayer
+import org.jetbrains.skiko.SkiaPanel
 import org.jetbrains.skiko.SkiaLayerProperties
 import org.jetbrains.skiko.RenderException
 import org.jetbrains.skiko.SkiaLayerAnalytics
 
 internal class WindowsSoftwareRedrawer(
-    layer: SkiaLayer,
+    layer: SkiaPanel,
     analytics: SkiaLayerAnalytics,
     properties: SkiaLayerProperties
 ) : AbstractDirectSoftwareRedrawer(layer, analytics, properties) {

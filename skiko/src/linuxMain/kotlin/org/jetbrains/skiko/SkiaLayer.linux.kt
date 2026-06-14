@@ -3,6 +3,10 @@ package org.jetbrains.skiko
 import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.PixelGeometry
 
+@Deprecated(
+    message = "Deprecated in favor of the render-context API. On AWT use SkiaPanel; on other platforms use RenderContext with a caller-owned view.",
+    level = DeprecationLevel.WARNING,
+)
 actual open class SkiaLayer  {
     actual var renderApi: GraphicsApi
         get() = TODO("Not yet implemented")

@@ -2,14 +2,16 @@ package org.jetbrains.skiko.context
 
 import org.jetbrains.skia.*
 import org.jetbrains.skiko.AngleApi
-import org.jetbrains.skiko.LayerDrawScope
+import org.jetbrains.skiko.GraphicsApi
 import org.jetbrains.skiko.RenderException
-import org.jetbrains.skiko.SkiaLayer
 import org.jetbrains.skiko.redrawer.AngleRedrawer
 
-internal class AngleContextHandler(layer: SkiaLayer) : ContextBasedContextHandler(layer, "ANGLE") {
-    private val angleRedrawer: AngleRedrawer
-        get() = layer.redrawer!! as AngleRedrawer
+internal class AngleContextHandler(
+    private val angleRedrawer: AngleRedrawer,
+    gpuResourceCacheLimit: Long,
+    pixelGeometry: PixelGeometry,
+    drawContent: Canvas.() -> Unit
+) : ContextBasedContextHandler(GraphicsApi.ANGLE, pixelGeometry, gpuResourceCacheLimit, "ANGLE", drawContent) {
 
     override fun makeContext() = angleRedrawer.makeContext()
 
@@ -24,11 +26,11 @@ internal class AngleContextHandler(layer: SkiaLayer) : ContextBasedContextHandle
         return false
     }
 
-    override fun LayerDrawScope.initCanvas() {
+    override fun initCanvas(width: Int, height: Int) {
         val context = context ?: return
 
-        val w = scaledLayerWidth
-        val h = scaledLayerHeight
+        val w = width
+        val h = height
 
         if (isSizeChanged(w, h) || surface == null) {
             disposeCanvas()

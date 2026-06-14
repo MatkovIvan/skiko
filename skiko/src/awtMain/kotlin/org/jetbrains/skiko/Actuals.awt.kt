@@ -5,7 +5,7 @@ import javax.swing.UIManager
 
 actual fun setSystemLookAndFeel() = UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
 
-internal actual fun makeDefaultRenderFactory(): RenderFactory =
+internal fun makeDefaultRenderFactory(): RenderFactory =
     RenderFactory { layer, renderApi, analytics, properties ->
         when (hostOs) {
             OS.MacOS -> when (renderApi) {

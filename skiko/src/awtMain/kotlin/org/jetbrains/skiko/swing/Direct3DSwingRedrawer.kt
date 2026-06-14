@@ -11,14 +11,17 @@ import org.jetbrains.skiko.graphicapi.InternalDirectXApi.makeDirectXContext
 import org.jetbrains.skiko.graphicapi.InternalDirectXApi.makeDirectXRenderTargetOffScreen
 import org.jetbrains.skiko.graphicapi.InternalDirectXApi.makeDirectXTexture
 import org.jetbrains.skiko.graphicapi.InternalDirectXApi.waitForCompletion
-import java.awt.Graphics2D
 
+/**
+ * Offscreen Direct3D surface (Windows) for the Swing-composited path. Provides the per-API offscreen
+ * surface; the shared draw/blit orchestration lives in [SwingRedrawerBase].
+ */
 // TODO reuse DirectXOffscreenContext
 internal class Direct3DSwingRedrawer(
     swingLayerProperties: SwingLayerProperties,
-    private val renderDelegate: SkikoRenderDelegate,
+    renderDelegate: SkikoRenderDelegate,
     analytics: SkiaLayerAnalytics
-) : SwingRedrawerBase(swingLayerProperties, analytics, GraphicsApi.DIRECT3D) {
+) : SwingRedrawerBase(swingLayerProperties, renderDelegate, analytics, GraphicsApi.DIRECT3D) {
     companion object {
         init {
             Library.load()
@@ -31,7 +34,7 @@ internal class Direct3DSwingRedrawer(
 
     private val device = createDirectXOffscreenDevice(adapter)
 
-    private val painter: SwingPainter = SoftwareSwingPainter(swingLayerProperties)
+    override val painter: SwingPainter = SoftwareSwingPainter(swingLayerProperties)
 
     private val context = if (device == 0L) {
         throw RenderException("Failed to create DirectX12 device.")
@@ -42,14 +45,12 @@ internal class Direct3DSwingRedrawer(
     }
 
     private var texturePtr: Long = 0
-    private var bytesToDraw = ByteArray(0)
 
     init {
         onContextInit(context)
     }
 
     override fun dispose() {
-        bytesToDraw = ByteArray(0)
         context.close()
         disposeDirectXTexture(texturePtr)
         disposeDevice(device)
@@ -57,7 +58,7 @@ internal class Direct3DSwingRedrawer(
         super.dispose()
     }
 
-    override fun onRender(g: Graphics2D, width: Int, height: Int, nanoTime: Long) {
+    override fun renderOffscreen(width: Int, height: Int, draw: (surface: Surface, texturePtr: Long) -> Unit) {
         autoCloseScope {
             // We will have [Surface] with width == [alignedWidth],
             // but imitate (for SkikoRenderDelegate and Swing) like it has width == [width].
@@ -78,18 +79,13 @@ internal class Direct3DSwingRedrawer(
                 SurfaceProps(pixelGeometry = PixelGeometry.UNKNOWN)
             )?.autoClose() ?: throw RenderException("Cannot create surface")
 
-            val canvas = surface.canvas
-            canvas.clear(Color.TRANSPARENT)
-            renderDelegate.onRender(canvas, width, height, nanoTime)
-            flush(surface, g)
+            draw(surface, texturePtr)
         }
     }
 
-    fun flush(surface: Surface, g: Graphics2D) {
+    override fun flushSurface(surface: Surface) {
         surface.flushAndSubmit(syncCpu = false)
         waitForCompletion(device, texturePtr)
-
-        painter.paint(g, surface, texturePtr)
     }
 
     private fun makeRenderTarget() = BackendRenderTarget(

@@ -7,16 +7,19 @@ import org.jetbrains.skiko.layerFrameLimiter
 import org.jetbrains.skiko.context.DirectSoftwareContextHandler
 
 internal abstract class AbstractDirectSoftwareRedrawer(
-    private val layer: SkiaLayer,
+    private val layer: SkiaPanel,
     analytics: SkiaLayerAnalytics,
     private val properties: SkiaLayerProperties
 ) : AWTRedrawer(layer, analytics, GraphicsApi.SOFTWARE_FAST) {
-    private val contextHandler = DirectSoftwareContextHandler(layer)
+    private val contextHandler = DirectSoftwareContextHandler(this, properties.gpuResourceCacheLimit, layer.pixelGeometry, layer::draw)
     override val renderInfo: String get() = contextHandler.rendererInfo()
 
+    @OptIn(ExperimentalSkikoApi::class)
+    override val renderContext: RenderContext get() = contextHandler
+
     private val frameJob = Job()
-    private val frameLimiter = layerFrameLimiter(CoroutineScope(frameJob), layer.backedLayer)
-    private val frameDispatcher = FrameDispatcher(MainUIDispatcher) {
+    private val frameLimiter = layerFrameLimiter(CoroutineScope(frameJob), layer.requireBackedLayer)
+    private val frameExecutor = RenderExecutor {
         if (properties.isVsyncEnabled && properties.isVsyncFramelimitFallbackEnabled) {
             frameLimiter.awaitNextFrame()
         }
@@ -30,7 +33,7 @@ internal abstract class AbstractDirectSoftwareRedrawer(
     protected var device = 0L
 
     override fun needRender(throttledToVsync: Boolean) {
-        frameDispatcher.scheduleFrame()
+        frameExecutor.scheduleFrame()
     }
 
     protected open fun draw() = inDrawScope { contextHandler.draw() }
@@ -53,7 +56,7 @@ internal abstract class AbstractDirectSoftwareRedrawer(
     open fun finishFrame(surface: Long) = finishFrame(device, surface)
     override fun dispose() {
         frameJob.cancel()
-        frameDispatcher.cancel()
+        frameExecutor.close()
         contextHandler.dispose()
         disposeDevice(device)
         super.dispose()

@@ -1,51 +1,67 @@
+@file:OptIn(ExperimentalSkikoApi::class)
+
 package org.jetbrains.skiko
 
 import android.content.Context
-import android.opengl.GLES30
 import android.opengl.GLSurfaceView
 import android.widget.LinearLayout
-import android.view.MotionEvent
-import android.view.KeyEvent
-import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
 import org.jetbrains.skia.*
-import java.nio.IntBuffer
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
-internal interface FrameManager {
-    fun onFrameCompleted()
-}
+/**
+ * A [GLSurfaceView] that renders a [SkikoRenderDelegate] through the public render-context API.
+ *
+ * It owns a GLES [RenderContext] (created lazily on the GL thread) and is driven by the shared
+ * [DisplayFrameTicker] (Choreographer). Once started via [scheduleFrame] it animates continuously at the
+ * display refresh rate until the view is detached: each vsync it records the delegate's frame on the main
+ * thread and rasterizes it through the context on the GL thread. This is the non-AWT Android entry point of
+ * the render-context API — it does not depend on the deprecated `SkiaLayer`.
+ */
+class SkikoSurfaceView internal constructor(
+    context: Context,
+    renderDelegateProvider: () -> SkikoRenderDelegate?,
+) : GLSurfaceView(context) {
 
-class SkikoSurfaceView(context: Context, val layer: SkiaLayer) : GLSurfaceView(context), FrameManager {
-    private val renderer = SkikoSurfaceRender(layer, this)
+    /** Render [renderDelegate] into this view; drive it with [scheduleFrame]. */
+    constructor(context: Context, renderDelegate: SkikoRenderDelegate) :
+        this(context, { renderDelegate })
+
+    private val renderer = SkikoSurfaceRender(renderDelegateProvider)
     init {
         layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        setEGLConfigChooser (8, 8, 8, 0, 24, 8)
+        setEGLConfigChooser(8, 8, 8, 0, 24, 8)
         setEGLContextClientVersion(2)
         setRenderer(renderer)
         setRenderMode(RENDERMODE_WHEN_DIRTY)
     }
 
-    private val frameAck = Channel<Unit>(Channel.CONFLATED)
-
-    override fun onFrameCompleted() {
-        frameAck.trySend(Unit)
-    }
-
-    private val frameDispatcher = FrameDispatcher(Dispatchers.Main) {
-        renderer.update()
-        requestRender()
-        frameAck.receive()
+    // The shared, vsync-aligned frame source (Choreographer). Each tick records the frame on the main
+    // thread, asks the GL thread to draw it (GLSurfaceView coalesces requestRender to one per vsync), and
+    // schedules the next tick so animation keeps running.
+    private val frameTicker = DisplayFrameTicker().apply {
+        subscribe {
+            renderer.update()
+            requestRender()
+            scheduleFrame()
+        }
     }
 
     fun scheduleFrame() {
-        frameDispatcher.scheduleFrame()
+        frameTicker.scheduleFrame()
+    }
+
+    override fun onDetachedFromWindow() {
+        frameTicker.close()
+        renderer.dispose()
+        super.onDetachedFromWindow()
     }
 }
 
-private class SkikoSurfaceRender(private val layer: SkiaLayer, private val manager: FrameManager) : GLSurfaceView.Renderer {
+private class SkikoSurfaceRender(
+    private val renderDelegateProvider: () -> SkikoRenderDelegate?,
+) : GLSurfaceView.Renderer {
     private var width: Int = 0
     private var height: Int = 0
 
@@ -54,91 +70,52 @@ private class SkikoSurfaceRender(private val layer: SkiaLayer, private val manag
     private var pictureRecorder: PictureRecorder = PictureRecorder()
     private val pictureLock = Any()
 
+    private var renderContext: RenderContext? = null
+
     private fun <T : Any> lockPicture(action: (PictureHolder) -> T): T? {
         return synchronized(pictureLock) {
             val picture = picture
-            if (picture != null) {
-                action(picture)
-            } else {
-                null
-            }
+            if (picture != null) action(picture) else null
         }
     }
 
-    // This method is called from the main thread.
+    // Called from the main thread: record the frame from the render delegate into a picture.
     fun update() {
-        layer.renderDelegate?.let {
-            val bounds = Rect.makeWH(width.toFloat(), width.toFloat())
+        renderDelegateProvider()?.let {
+            val bounds = Rect.makeWH(width.toFloat(), height.toFloat())
             val canvas = pictureRecorder.beginRecording(bounds)
             try {
                 it.onRender(canvas, width, height, System.nanoTime())
             } finally {
                 synchronized(pictureLock) {
                     picture?.instance?.close()
-                    val picture = pictureRecorder.finishRecordingAsPicture()
-                    this.picture = PictureHolder(picture, width, height)
+                    picture = PictureHolder(pictureRecorder.finishRecordingAsPicture(), width, height)
                 }
             }
         }
     }
 
-    // This method is called from GL rendering thread.
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-        gl!!
-        gl.glClearColor(0f, 0f, 0f, 0f)
-        gl.glClear(GL10.GL_COLOR_BUFFER_BIT)
+        // The GLES surface is owned by the RenderContext, created lazily on the GL thread in onDrawFrame.
     }
 
-    // This method is called from GL rendering thread.
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
-        gl!!
         this.width = width
         this.height = height
-        initCanvas(gl)
     }
 
-    // This method is called from GL rendering thread, it shall render Skia picture.
+    // Called from the GL rendering thread: rasterize the recorded picture through the public render context.
     override fun onDrawFrame(gl: GL10?) {
-        lockPicture {
-            canvas?.clear(-1)
-            canvas?.drawPicture(it.instance)
-            Unit
-        }
-        context?.flush()
-        manager.onFrameCompleted()
+        if (width == 0 || height == 0) return
+        val context = renderContext ?: createRenderContext().also { renderContext = it }
+        val surface = context.acquireSurface(width, height)
+        surface.canvas.clear(Color.WHITE)
+        lockPicture { surface.canvas.drawPicture(it.instance) }
+        context.present()
     }
 
-    private var context: DirectContext? = null
-    private var renderTarget: BackendRenderTarget? = null
-    private var surface: Surface? = null
-    private var canvas: Canvas? = null
-
-    private fun initCanvas(gl: GL10) {
-        disposeCanvas()
-        val intBuf1 = IntBuffer.allocate(1)
-        gl.glGetIntegerv(GLES30.GL_DRAW_FRAMEBUFFER_BINDING, intBuf1)
-        val fbId = intBuf1[0]
-        renderTarget = makeGLRenderTarget(
-            width,
-            height,
-            0,
-            8,
-            fbId,
-            FramebufferFormat.GR_GL_RGBA8
-        )
-        context = makeGLContext()
-        surface = Surface.makeFromBackendRenderTarget(
-            context!!,
-            renderTarget!!,
-            SurfaceOrigin.BOTTOM_LEFT,
-            SurfaceColorFormat.RGBA_8888,
-            ColorSpace.sRGB
-        ) ?: throw RenderException("Cannot create surface")
-        canvas = surface!!.canvas
-    }
-
-    private fun disposeCanvas() {
-        surface?.close()
-        renderTarget?.close()
+    fun dispose() {
+        renderContext?.close()
+        renderContext = null
     }
 }

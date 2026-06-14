@@ -8,6 +8,10 @@ import org.jetbrains.skiko.context.ContextHandler
 /**
  * Generic layer for Skiko rendering.
  */
+@Deprecated(
+    message = "Deprecated in favor of the render-context API. On AWT use SkiaPanel; on other platforms use RenderContext with a caller-owned view.",
+    level = DeprecationLevel.WARNING,
+)
 expect open class SkiaLayer {
     /**
      * Current graphics API used for rendering.

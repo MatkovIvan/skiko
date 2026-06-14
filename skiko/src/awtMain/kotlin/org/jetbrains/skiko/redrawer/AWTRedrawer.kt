@@ -9,7 +9,7 @@ import org.jetbrains.skiko.SkiaLayerAnalytics.DeviceAnalytics
  */
 @OptIn(ExperimentalSkikoApi::class)
 internal abstract class AWTRedrawer(
-    private val layer: SkiaLayer,
+    private val layer: SkiaPanel,
     private val analytics: SkiaLayerAnalytics,
     private val graphicsApi: GraphicsApi,
 ) : Redrawer {
@@ -75,5 +75,5 @@ internal abstract class AWTRedrawer(
         check(!isDisposed) { "${this.javaClass.simpleName} is disposed" }
     }
 
-    override fun isTransparentBackgroundSupported() = defaultIsTransparentBackgroundSupported(layer)
+    override fun isTransparentBackgroundSupported() = defaultIsTransparentBackgroundSupported(layer.fullscreen)
 }

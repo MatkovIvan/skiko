@@ -1,47 +1,55 @@
+@file:OptIn(ExperimentalSkikoApi::class)
+
 package org.jetbrains.skiko
 
 import kotlinx.browser.window
 import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.Color
 import org.jetbrains.skia.PixelGeometry
-import org.jetbrains.skiko.wasm.createWebGLContext
 import org.w3c.dom.HTMLCanvasElement
 
 /**
- * Provides a way to render the content and to receive the input events.
- * Rendering and events processing should be implemented in [renderDelegate].
+ * Provides a way to render content into an [HTMLCanvasElement] and receive input events.
  *
- * SkikoLayer needs to be initialized with [HTMLCanvasElement] instance
- * using [attachTo] method.
+ * Deprecated and now a thin shim over the public render-context primitives: it binds a [RenderContext] to the
+ * attached `<canvas>` via [createRenderContext] and is driven by the shared [DisplayFrameTicker]
+ * (`requestAnimationFrame`). Rendering is delegated to [renderDelegate].
  */
+@Deprecated(
+    message = "Deprecated in favor of the render-context API. On AWT use SkiaPanel; on other platforms use RenderContext with a caller-owned view.",
+    level = DeprecationLevel.WARNING,
+)
 actual open class SkiaLayer {
-    internal var state: CanvasRenderer? = null
-
-    /**
-     * [GraphicsApi.WEBGL] is the only supported renderApi for k/js (browser).
-     */
+    /** [GraphicsApi.WEBGL] is the only supported renderApi for the browser. */
     actual var renderApi: GraphicsApi = GraphicsApi.WEBGL
 
-    /**
-     * See https://developer.mozilla.org/en-US/docs/Web/API/Window/devicePixelRatio
-     */
+    /** See https://developer.mozilla.org/en-US/docs/Web/API/Window/devicePixelRatio */
     actual val contentScale: Float
         get() = window.devicePixelRatio.toFloat()
 
-    /**
-     * Fullscreen is not supported
-     */
+    /** Fullscreen is not supported. */
     actual var fullscreen: Boolean
         get() = false
         set(value) {
             if (value) throw Exception("Fullscreen is not supported!")
         }
 
-    /**
-     * Schedules a drawFrame to the appropriate moment.
-     */
+    /** Rendering and event-processing logic. */
+    actual var renderDelegate: SkikoRenderDelegate? = null
+
+    actual val pixelGeometry: PixelGeometry
+        get() = PixelGeometry.UNKNOWN
+
+    private var htmlCanvas: HTMLCanvasElement? = null
+    private var renderContext: RenderContext? = null
+    private var frameTicker: DisplayFrameTicker? = null
+
+    actual val component: Any?
+        get() = this.htmlCanvas
+
+    /** Schedules a frame at the next animation-frame tick. */
     actual fun needRender(throttledToVsync: Boolean) {
-        state?.needRedraw()
+        frameTicker?.scheduleFrame()
     }
 
     @Deprecated(
@@ -51,48 +59,39 @@ actual open class SkiaLayer {
     actual fun needRedraw() = needRender()
 
     /**
-     * An implementation of [SkikoRenderDelegate] with content rendering and
-     * event processing logic.
-     */
-    actual var renderDelegate: SkikoRenderDelegate? = null
-
-    /**
-     * @param container - should be an instance of [HTMLCanvasElement]
+     * @param container should be an instance of [HTMLCanvasElement].
      */
     actual fun attachTo(container: Any) {
         attachTo(container as HTMLCanvasElement)
     }
 
-    actual fun detach() {
-        // TODO: when switch to the frame dispatcher - stop it here.
-    }
-
-    actual val component: Any?
-        get() = this.htmlCanvas
-
-    private var htmlCanvas: HTMLCanvasElement? = null
-
-    /**
-     * Initializes the [CanvasRenderer] and events listeners.
-     * Delegates rendering and events processing to [renderDelegate].
-     */
     private fun attachTo(htmlCanvas: HTMLCanvasElement) {
         this.htmlCanvas = htmlCanvas
-
-        state = object: CanvasRenderer(createWebGLContext(htmlCanvas), htmlCanvas.width, htmlCanvas.height) {
-            override fun drawFrame(currentTimestamp: Double) {
-                // currentTimestamp is in milliseconds.
-                val currentNanos = currentTimestamp * 1_000_000
-                renderDelegate?.onRender(canvas!!, width, height, currentNanos.toLong())
-            }
+        renderContext = createRenderContext(htmlCanvas)
+        frameTicker = DisplayFrameTicker().apply {
+            subscribe { nanoTime -> renderFrame(nanoTime) }
         }
     }
 
-    internal actual fun draw(canvas: Canvas) {
-        canvas.clear(Color.WHITE)
-        renderDelegate?.onRender(canvas, state!!.width, state!!.height, currentNanoTime())
+    actual fun detach() {
+        frameTicker?.close()
+        frameTicker = null
+        renderContext?.close()
+        renderContext = null
     }
 
-    actual val pixelGeometry: PixelGeometry
-        get() = PixelGeometry.UNKNOWN
+    private fun renderFrame(nanoTime: Long) {
+        val context = renderContext ?: return
+        val canvasElement = htmlCanvas ?: return
+        val width = canvasElement.width
+        val height = canvasElement.height
+        if (width == 0 || height == 0) return
+        val surface = context.acquireSurface(width, height)
+        surface.canvas.clear(Color.WHITE)
+        renderDelegate?.onRender(surface.canvas, width, height, nanoTime)
+        context.present()
+    }
+
+    /** No-op: the render loop draws directly through [renderFrame]; kept to satisfy the expect declaration. */
+    internal actual fun draw(canvas: Canvas) {}
 }

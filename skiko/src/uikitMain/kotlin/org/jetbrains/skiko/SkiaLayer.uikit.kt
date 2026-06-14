@@ -6,6 +6,10 @@ import org.jetbrains.skia.Color
 import org.jetbrains.skia.PixelGeometry
 import org.jetbrains.skia.Surface
 
+@Deprecated(
+    message = "Deprecated in favor of the render-context API. On AWT use SkiaPanel; on other platforms use RenderContext with a caller-owned view.",
+    level = DeprecationLevel.WARNING,
+)
 actual open class SkiaLayer {
     internal var needRedrawCallback: () -> Unit = {}
 

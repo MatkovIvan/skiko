@@ -5,22 +5,18 @@ import org.jetbrains.skiko.GraphicsApi
 import org.jetbrains.skiko.SkiaLayerAnalytics
 import org.jetbrains.skiko.SkikoRenderDelegate
 import org.jetbrains.skiko.autoCloseScope
-import java.awt.Graphics2D
 
 /**
- * Provides a way to draw on Skia canvas using software rendering without GPU acceleration and then draw it on [java.awt.Graphics2D].
- *
- * Content to draw is provided by [SkikoRenderDelegate].
- *
- * @see SwingRedrawerBase
- * @see SoftwareSwingPainter
+ * Offscreen software (CPU raster) surface for the Swing-composited path. Provides the per-API offscreen
+ * surface; the shared draw/blit orchestration lives in [SwingRedrawerBase].
  */
 internal class SoftwareSwingRedrawer(
     swingLayerProperties: SwingLayerProperties,
-    private val renderDelegate: SkikoRenderDelegate,
+    renderDelegate: SkikoRenderDelegate,
     analytics: SkiaLayerAnalytics
 ) : SwingRedrawerBase(
     swingLayerProperties,
+    renderDelegate,
     analytics,
     GraphicsApi.SOFTWARE_FAST
 ) {
@@ -28,7 +24,7 @@ internal class SoftwareSwingRedrawer(
         onDeviceChosen("Software")
     }
 
-    private val painter: SwingPainter = SoftwareSwingPainter(swingLayerProperties)
+    override val painter: SwingPainter = SoftwareSwingPainter(swingLayerProperties)
 
     private val storage = Bitmap()
 
@@ -42,25 +38,22 @@ internal class SoftwareSwingRedrawer(
         painter.dispose()
     }
 
-    override fun onRender(g: Graphics2D, width: Int, height: Int, nanoTime: Long) = autoCloseScope {
-        if (storage.width != width || storage.height != height) {
-            storage.allocPixelsFlags(ImageInfo.makeS32(width, height, ColorAlphaType.PREMUL), false)
+    override fun renderOffscreen(width: Int, height: Int, draw: (surface: Surface, texturePtr: Long) -> Unit) =
+        autoCloseScope {
+            if (storage.width != width || storage.height != height) {
+                storage.allocPixelsFlags(ImageInfo.makeS32(width, height, ColorAlphaType.PREMUL), false)
+            }
+
+            val pixelsPointer = storage.peekPixels()?.addr!!
+            val surface = Surface.makeRasterDirect(
+                imageInfo = storage.imageInfo,
+                pixelsPtr = pixelsPointer,
+                rowBytes = storage.rowBytes
+            ).autoClose()
+
+            draw(surface, 0)
         }
 
-        val pixelsPointer = storage.peekPixels()?.addr!!
-        val surface = Surface.makeRasterDirect(
-            imageInfo = storage.imageInfo,
-            pixelsPtr = pixelsPointer,
-            rowBytes = storage.rowBytes
-        ).autoClose()
-
-        surface.canvas.clear(Color.TRANSPARENT)
-        renderDelegate.onRender(surface.canvas, width, height, nanoTime)
-
-        flush(g, surface)
-    }
-
-    private fun flush(g: Graphics2D, surface: Surface) = autoCloseScope() {
-        painter.paint(g, surface, 0)
-    }
+    // Raster surface: nothing to submit to a GPU.
+    override fun flushSurface(surface: Surface) = Unit
 }

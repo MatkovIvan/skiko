@@ -1,7 +1,10 @@
+@file:OptIn(ExperimentalSkikoApi::class)
+
 package org.jetbrains.skiko.redrawer
 
+import org.jetbrains.skiko.ExperimentalSkikoApi
 import org.jetbrains.skiko.OS
-import org.jetbrains.skiko.SkiaLayer
+import org.jetbrains.skiko.RenderContext
 import org.jetbrains.skiko.hostOs
 import kotlin.time.TimeSource
 
@@ -16,14 +19,21 @@ internal interface Redrawer {
     fun setVisible(isVisible: Boolean) = Unit
     val renderInfo: String
     fun isTransparentBackgroundSupported(): Boolean
+
+    /**
+     * The live [RenderContext] this redrawer rasterizes through (its per-API on-screen context handler), or
+     * `null` for redrawers that do not expose one. Surfaced publicly via `SkiaPanel.renderContext` for GPU
+     * interop.
+     */
+    val renderContext: RenderContext? get() = null
 }
 
-internal fun defaultIsTransparentBackgroundSupported(layer: SkiaLayer): Boolean {
+internal fun defaultIsTransparentBackgroundSupported(isFullscreen: Boolean): Boolean {
     if (hostOs == OS.MacOS) {
         // macOS transparency is always supported
         return true
     }
 
     // for non-macOS in fullscreen transparency is not supported
-    return !layer.fullscreen
+    return !isFullscreen
 }

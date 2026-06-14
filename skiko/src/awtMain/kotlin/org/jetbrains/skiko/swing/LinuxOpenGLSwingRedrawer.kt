@@ -2,18 +2,21 @@ package org.jetbrains.skiko.swing
 
 import org.jetbrains.skia.*
 import org.jetbrains.skiko.*
-import java.awt.Graphics2D
 
+/**
+ * Offscreen OpenGL surface (Linux) for the Swing-composited path. Provides the per-API offscreen surface
+ * inside the GL render brackets; the shared draw/blit orchestration lives in [SwingRedrawerBase].
+ */
 internal class LinuxOpenGLSwingRedrawer(
     swingLayerProperties: SwingLayerProperties,
-    private val renderDelegate: SkikoRenderDelegate,
+    renderDelegate: SkikoRenderDelegate,
     analytics: SkiaLayerAnalytics
-) : SwingRedrawerBase(swingLayerProperties, analytics, GraphicsApi.OPENGL) {
+) : SwingRedrawerBase(swingLayerProperties, renderDelegate, analytics, GraphicsApi.OPENGL) {
     init {
         onDeviceChosen("OpenGL OffScreen") // TODO: properly choose device
     }
 
-    private val painter: SwingPainter = SoftwareSwingPainter(swingLayerProperties)
+    override val painter: SwingPainter = SoftwareSwingPainter(swingLayerProperties)
 
     private val offScreenContextPtr: Long = makeOffScreenContext().also {
         if (it == 0L) {
@@ -21,27 +24,20 @@ internal class LinuxOpenGLSwingRedrawer(
         }
     }
 
-
     private var offScreenBufferPtr: Long = 0L
-
-    private val storage = Bitmap()
-
-    private var bytesToDraw = ByteArray(0)
 
     init {
         onContextInit(null)
     }
 
     override fun dispose() {
-        bytesToDraw = ByteArray(0)
-        storage.close()
         disposeOffScreenBuffer(offScreenBufferPtr)
         disposeOffScreenContext(offScreenContextPtr)
         painter.dispose()
         super.dispose()
     }
 
-    override fun onRender(g: Graphics2D, width: Int, height: Int, nanoTime: Long) {
+    override fun renderOffscreen(width: Int, height: Int, draw: (surface: Surface, texturePtr: Long) -> Unit) {
         offScreenBufferPtr = makeOffScreenBuffer(offScreenContextPtr, offScreenBufferPtr, width, height)
         if (offScreenBufferPtr == 0L) {
             throw RenderException("Cannot create offScreen OpenGL buffer")
@@ -50,11 +46,11 @@ internal class LinuxOpenGLSwingRedrawer(
         try {
             autoCloseScope {
                 // TODO: reuse texture
-                val texturePtr = createAndBindTexture(width, height)
-                if (texturePtr == 0L) {
+                val glTexturePtr = createAndBindTexture(width, height)
+                if (glTexturePtr == 0L) {
                     throw RenderException("Cannot create offScreen OpenGL texture")
                 }
-                val fbId = getFboId(texturePtr)
+                val fbId = getFboId(glTexturePtr)
                 val renderTarget = makeGLRenderTarget(
                     width,
                     height,
@@ -75,20 +71,16 @@ internal class LinuxOpenGLSwingRedrawer(
                     SurfaceProps(pixelGeometry = PixelGeometry.UNKNOWN)
                 )?.autoClose() ?: throw RenderException("Cannot create surface")
 
-                val canvas = surface.canvas
-                canvas.clear(Color.TRANSPARENT)
-                renderDelegate.onRender(canvas, width, height, nanoTime)
-                flush(surface, g)
-                unbindAndDisposeTexture(texturePtr)
+                draw(surface, 0)
+                unbindAndDisposeTexture(glTexturePtr)
             }
         } finally {
             finishRendering(offScreenContextPtr)
         }
     }
 
-    private fun flush(surface: Surface, g: Graphics2D) {
+    override fun flushSurface(surface: Surface) {
         surface.flushAndSubmit(syncCpu = true)
-        painter.paint(g, surface, 0)
     }
 
     /**

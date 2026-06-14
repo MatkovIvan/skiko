@@ -5,7 +5,7 @@ import org.jetbrains.skiko.*
 import org.jetbrains.skiko.context.OpenGLContextHandler
 
 internal class WindowsOpenGLRedrawer(
-    private val layer: SkiaLayer,
+    private val layer: SkiaPanel,
     analytics: SkiaLayerAnalytics,
     private val properties: SkiaLayerProperties
 ) : AWTRedrawer(layer, analytics, GraphicsApi.OPENGL) {
@@ -13,10 +13,13 @@ internal class WindowsOpenGLRedrawer(
         loadOpenGLLibrary()
     }
 
-    private val contextHandler = OpenGLContextHandler(layer)
+    private val contextHandler = OpenGLContextHandler(properties.gpuResourceCacheLimit, layer.pixelGeometry, layer::draw)
     override val renderInfo: String get() = contextHandler.rendererInfo()
 
-    private val device: Long = layer.backedLayer.useDrawingSurfacePlatformInfo {
+    @OptIn(ExperimentalSkikoApi::class)
+    override val renderContext: RenderContext get() = contextHandler
+
+    private val device: Long = layer.requireBackedLayer.useDrawingSurfacePlatformInfo {
         getDevice(it).also { devicePtr ->
             check(devicePtr != 0L) { "Can't get device" }
         }
@@ -92,6 +95,9 @@ internal class WindowsOpenGLRedrawer(
             .filterNot(WindowsOpenGLRedrawer::isDisposed)
             .filter { it.layer.isShowing }
 
+        // Deliberately a single static FrameDispatcher (not a per-instance RenderExecutor): it batches all
+        // on-screen GL windows into one frame and coalesces one dwmFlush vsync wait across them. A
+        // per-instance executor would regress this — each window would wait for vsync separately.
         private val frameDispatcher = FrameDispatcher(MainUIDispatcher) {
             toRedrawCopy.addAll(toRedraw)
             toRedraw.clear()

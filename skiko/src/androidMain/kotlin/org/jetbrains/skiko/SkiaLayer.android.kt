@@ -6,6 +6,10 @@ import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.PixelGeometry
 import org.jetbrains.skia.Color
 
+@Deprecated(
+    message = "Deprecated in favor of the render-context API. On AWT use SkiaPanel; on other platforms use RenderContext with a caller-owned view.",
+    level = DeprecationLevel.WARNING,
+)
 actual open class SkiaLayer {
     private var glView: SkikoSurfaceView? = null
     private var container: ViewGroup? = null
@@ -34,7 +38,7 @@ actual open class SkiaLayer {
     fun attachTo(container: ViewGroup) {
         initDefaultContext(container.context)
 
-        val view = SkikoSurfaceView(container.context, this)
+        val view = SkikoSurfaceView(container.context) { renderDelegate }
         container.addView(view)
 
         this.container = container

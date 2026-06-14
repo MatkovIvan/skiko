@@ -26,13 +26,13 @@ internal value class MetalDevice(val ptr: Long)
  * This [MetalRedrawer] draws content on-screen for maximum efficiency,
  * but it may prevent for using it in embedded components (such as interop with Swing).
  *
- * Content to draw is provided by [SkiaLayer.draw].
+ * Content to draw is provided by [SkiaPanel.draw].
  *
  * @see MetalContextHandler
  * @see FrameDispatcher
  */
 internal class MetalRedrawer(
-    private val layer: SkiaLayer,
+    private val layer: SkiaPanel,
     analytics: SkiaLayerAnalytics,
     properties: SkiaLayerProperties
 ) : AWTRedrawer(layer, analytics, GraphicsApi.METAL) {
@@ -68,15 +68,18 @@ internal class MetalRedrawer(
     init {
         onDeviceChosen(adapter.name)
         val numberOfBuffers = properties.frameBuffering.numberOfBuffers() ?: 0 // zero means default for system
-        val initDevice = layer.backedLayer.useDrawingSurfacePlatformInfo {
+        val initDevice = layer.requireBackedLayer.useDrawingSurfacePlatformInfo {
             MetalDevice(createMetalDevice(layer.windowHandle, layer.transparency, numberOfBuffers, adapter.ptr, it))
         }
         _device = initDevice
-        contextHandler = MetalContextHandler(layer, initDevice, adapter)
+        contextHandler = MetalContextHandler(initDevice, adapter, properties.gpuResourceCacheLimit, layer.pixelGeometry, layer::draw)
         setDisplaySyncEnabled(initDevice.ptr, properties.isVsyncEnabled)
     }
 
     override val renderInfo: String get() = contextHandler.rendererInfo()
+
+    @OptIn(ExperimentalSkikoApi::class)
+    override val renderContext: RenderContext get() = contextHandler
 
     private val frameDispatcher = FrameScheduler()
 
@@ -155,12 +158,12 @@ internal class MetalRedrawer(
     override fun syncBounds() = synchronized(drawLock) {
         check(isEventDispatchThread()) { "Method should be called from AWT event dispatch thread" }
         val rootPane = getRootPane(layer)
-        val globalPosition = convertPoint(layer.backedLayer, 0, 0, rootPane)
+        val globalPosition = convertPoint(layer.requireBackedLayer, 0, 0, rootPane)
         setContentScale(device.ptr, layer.contentScale)
         val x = globalPosition.x
         val y = rootPane.height - globalPosition.y - layer.height
-        val width = layer.backedLayer.width.coerceAtLeast(0)
-        val height = layer.backedLayer.height.coerceAtLeast(0)
+        val width = layer.requireBackedLayer.width.coerceAtLeast(0)
+        val height = layer.requireBackedLayer.height.coerceAtLeast(0)
         Logger.debug { "MetalRedrawer#resizeLayers $this {x: $x y: $y width: $width height: $height} rootPane: ${rootPane.size}" }
         resizeLayers(device.ptr, x, y, width, height)
     }
@@ -194,13 +197,13 @@ internal class MetalRedrawer(
             }
         }
 
-        private val updateDispatcher = FrameDispatcher(MainUIDispatcher) {
+        private val updateExecutor = RenderExecutor {
             if (layer.isShowing) {
                 updateIfRequested()
             }
         }
 
-        private val frameDispatcher = FrameDispatcher(MainUIDispatcher) {
+        private val frameExecutor = RenderExecutor {
             if (layer.isShowing) {
                 updateIfRequested()
                 draw()
@@ -213,15 +216,15 @@ internal class MetalRedrawer(
                 updateRequested.set(true)
 
                 if (!throttledToVsync) {
-                    updateDispatcher.scheduleFrame()
+                    updateExecutor.scheduleFrame()
                 }
             }
-            frameDispatcher.scheduleFrame()
+            frameExecutor.scheduleFrame()
         }
 
         fun cancel() {
-            updateDispatcher.cancel()
-            frameDispatcher.cancel()
+            updateExecutor.close()
+            frameExecutor.close()
         }
     }
 }

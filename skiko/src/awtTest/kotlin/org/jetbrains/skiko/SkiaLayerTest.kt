@@ -558,7 +558,7 @@ class SkiaLayerTest {
         }
     }
 
-    private abstract class BaseTestRedrawer(val layer: SkiaLayer): Redrawer {
+    private abstract class BaseTestRedrawer(val layer: SkiaPanel): Redrawer {
         private val frameDispatcher = FrameDispatcher(MainUIDispatcher) {
             renderImmediately()
         }
@@ -566,7 +566,7 @@ class SkiaLayerTest {
         override fun needRender(throttledToVsync: Boolean) = frameDispatcher.scheduleFrame()
         override fun renderImmediately() = Unit
         override fun update(nanoTime: Long) = layer.update(nanoTime)
-        override fun isTransparentBackgroundSupported() = defaultIsTransparentBackgroundSupported(layer)
+        override fun isTransparentBackgroundSupported() = defaultIsTransparentBackgroundSupported(layer.fullscreen)
 
         override val renderInfo: String
             get() = ""
@@ -576,9 +576,11 @@ class SkiaLayerTest {
     fun `fallback to software renderer, fail on init context`() = uiTest {
         testFallbackToSoftware { layer, _, _, _ ->
             object : BaseTestRedrawer(layer) {
-                private val contextHandler = object : JvmContextHandler(layer) {
+                private val contextHandler = object : JvmContextHandler(
+                    layer.renderApi, layer.pixelGeometry, layer.properties.gpuResourceCacheLimit, layer::draw
+                ) {
                     override fun initContext() = false
-                    override fun LayerDrawScope.initCanvas() = Unit
+                    override fun initCanvas(width: Int, height: Int) = Unit
                 }
                 override fun renderImmediately() = layer.inDrawScope { contextHandler.draw() }
             }
@@ -632,7 +634,7 @@ class SkiaLayerTest {
         private val nonSoftwareRenderFactory: RenderFactory
     ) : RenderFactory {
         override fun createRedrawer(
-            layer: SkiaLayer,
+            layer: SkiaPanel,
             renderApi: GraphicsApi,
             analytics: SkiaLayerAnalytics,
             properties: SkiaLayerProperties
@@ -658,7 +660,7 @@ class SkiaLayerTest {
         )
         try {
             var rendererChangedCallbackInvoked = false
-            window.layer.onStateChanged(SkiaLayer.PropertyKind.Renderer) {
+            window.layer.onStateChanged(SkiaPanel.PropertyKind.Renderer) {
                 rendererChangedCallbackInvoked = true
             }
             window.setLocation(200, 200)

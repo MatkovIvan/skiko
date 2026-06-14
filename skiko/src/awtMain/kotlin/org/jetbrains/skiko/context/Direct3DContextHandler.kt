@@ -1,21 +1,28 @@
 package org.jetbrains.skiko.context
 
+import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.DirectContext
+import org.jetbrains.skia.PixelGeometry
 import org.jetbrains.skia.Surface
 import org.jetbrains.skia.SurfaceProps
 import org.jetbrains.skia.impl.getPtr
-import org.jetbrains.skiko.LayerDrawScope
-import org.jetbrains.skiko.SkiaLayer
+import org.jetbrains.skiko.GraphicsApi
 import org.jetbrains.skiko.redrawer.Direct3DRedrawer
 import java.lang.ref.Reference
 
-internal class Direct3DContextHandler(layer: SkiaLayer) : ContextBasedContextHandler(layer, "Direct3D") {
+internal class Direct3DContextHandler(
+    private val directXRedrawer: Direct3DRedrawer,
+    gpuResourceCacheLimit: Long,
+    pixelGeometry: PixelGeometry,
+    drawContent: Canvas.() -> Unit
+) : ContextBasedContextHandler(GraphicsApi.DIRECT3D, pixelGeometry, gpuResourceCacheLimit, "Direct3D", drawContent) {
+    internal val direct3DAdapterPtr: Long get() = directXRedrawer.adapterPointer()
+    internal val direct3DDevicePtr: Long get() = directXRedrawer.devicePointer()
+    internal val direct3DQueuePtr: Long get() = directXRedrawer.queuePointer()
+
     private val bufferCount = 2
     private var surfaces: Array<Surface?> = arrayOfNulls(bufferCount)
     private fun isSurfacesNull() = surfaces.all { it == null }
-
-    private val directXRedrawer: Direct3DRedrawer
-        get() = layer.redrawer!! as Direct3DRedrawer
 
     override fun makeContext(): DirectContext = directXRedrawer.makeContext()
 
@@ -30,27 +37,27 @@ internal class Direct3DContextHandler(layer: SkiaLayer) : ContextBasedContextHan
         return false
     }
 
-    override fun LayerDrawScope.initCanvas() {
+    override fun initCanvas(width: Int, height: Int) {
         val context = context ?: return
 
         // Direct3D can't work with zero size.
         // Don't rewrite code to skipping, as we need the whole pipeline in zero case too
         // (drawing -> flushing -> swapping -> waiting for vsync)
-        val width = scaledLayerWidth.coerceAtLeast(1)
-        val height = scaledLayerHeight.coerceAtLeast(1)
+        val w = width.coerceAtLeast(1)
+        val h = height.coerceAtLeast(1)
 
-        if (isSizeChanged(width, height) || isSurfacesNull()) {
+        if (isSizeChanged(w, h) || isSurfacesNull()) {
             disposeCanvas()
             context.flush()
 
-            val justInitialized = directXRedrawer.changeSize(width, height)
+            val justInitialized = directXRedrawer.changeSize(w, h)
             try {
                 val surfaceProps = SurfaceProps(pixelGeometry = pixelGeometry)
                 for (bufferIndex in 0 until bufferCount) {
                     surfaces[bufferIndex] = directXRedrawer.makeSurface(
                         context = getPtr(context),
-                        width = width,
-                        height = height,
+                        width = w,
+                        height = h,
                         surfaceProps = surfaceProps,
                         index = bufferIndex
                     )
@@ -67,7 +74,7 @@ internal class Direct3DContextHandler(layer: SkiaLayer) : ContextBasedContextHan
         canvas = surface!!.canvas
     }
 
-    override fun flush(scope: LayerDrawScope) {
+    override fun present() {
         val context = context ?: return
         val surface = surface ?: return
         try {
