@@ -54,6 +54,20 @@ JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_context_MetalContextHandler_mak
     }
 }
 
+JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_context_MetalContextHandler_getMetalDevicePointer(
+    JNIEnv* env, jobject contextHandler, jlong devicePtr)
+{
+    MetalDevice *device = (__bridge MetalDevice *) (void*) devicePtr;
+    return (jlong) (__bridge void *) device.adapter;
+}
+
+JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_context_MetalContextHandler_getMetalCommandQueuePointer(
+    JNIEnv* env, jobject contextHandler, jlong devicePtr)
+{
+    MetalDevice *device = (__bridge MetalDevice *) (void*) devicePtr;
+    return (jlong) (__bridge void *) device.queue;
+}
+
 JNIEXPORT void JNICALL Java_org_jetbrains_skiko_context_MetalContextHandler_finishFrame(
     JNIEnv *env, jobject contextHandler, jlong devicePtr)
 {

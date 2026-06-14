@@ -404,6 +404,27 @@ extern "C"
         return toJavaPointer(GrDirectContexts::MakeD3D(backendContext).release());
     }
 
+    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_getDirectXAdapterPointer(
+        JNIEnv *env, jobject redrawer, jlong devicePtr)
+    {
+        DirectXDevice *d3dDevice = fromJavaPointer<DirectXDevice *>(devicePtr);
+        return toJavaPointer(d3dDevice->backendContext.fAdapter.get());
+    }
+
+    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_getDirectXDevicePointer(
+        JNIEnv *env, jobject redrawer, jlong devicePtr)
+    {
+        DirectXDevice *d3dDevice = fromJavaPointer<DirectXDevice *>(devicePtr);
+        return toJavaPointer(d3dDevice->backendContext.fDevice.get());
+    }
+
+    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_getDirectXQueuePointer(
+        JNIEnv *env, jobject redrawer, jlong devicePtr)
+    {
+        DirectXDevice *d3dDevice = fromJavaPointer<DirectXDevice *>(devicePtr);
+        return toJavaPointer(d3dDevice->backendContext.fQueue.get());
+    }
+
     JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_makeDirectXSurface(
         JNIEnv *env, jobject redrawer, jlong devicePtr, jlong contextPtr, jint width, jint height, jintArray surfacePropsInts, jint index)
     {

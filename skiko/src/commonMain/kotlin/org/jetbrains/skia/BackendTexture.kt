@@ -37,6 +37,61 @@ class BackendTexture internal constructor(ptr: NativePointer) : Managed(ptr, _Fi
             return BackendTexture(ptr)
         }
 
+        /**
+         * Creates a [BackendTexture] wrapping an existing Metal texture (`id<MTLTexture>`).
+         *
+         * The texture must live on the same `MTLDevice` as the [DirectContext] it will be used with — read
+         * that device from the render context's Metal handle accessor (`metalDevice` / `metalDevicePointer`).
+         * Pair with [Image.adoptTextureFrom] to sample it with no CPU round-trip. Available only on Metal
+         * builds; throws otherwise.
+         *
+         * @param width        width of the texture, in pixels
+         * @param height       height of the texture, in pixels
+         * @param mtlTexturePtr native pointer to the `id<MTLTexture>` (e.g. via `objcPtr()` on Kotlin/Native,
+         *                      or a `__bridge` cast to a pointer on the JVM)
+         * @param isMipmapped  whether [mtlTexturePtr] has a complete mipmap chain
+         */
+        fun makeMetal(
+            width: Int,
+            height: Int,
+            mtlTexturePtr: NativePointer,
+            isMipmapped: Boolean = false
+        ): BackendTexture {
+            Stats.onNativeCall()
+            val ptr = _nMakeMetal(width, height, mtlTexturePtr, isMipmapped)
+            if (ptr == NullPointer) throw RuntimeException("Failed to create Metal BackendTexture (Metal not available on this build?)")
+            return BackendTexture(ptr)
+        }
+
+        /**
+         * Creates a [BackendTexture] wrapping an existing Direct3D 12 texture (`ID3D12Resource`).
+         *
+         * The resource must belong to the same `ID3D12Device` as the [DirectContext] it will be used with —
+         * read that device from the render context's Direct3D handle accessors (`direct3DDevicePointer` etc).
+         * Pair with [Image.adoptTextureFrom] to sample it with no CPU round-trip. Available only on Direct3D
+         * builds; throws otherwise.
+         *
+         * @param width      width of the texture, in pixels
+         * @param height     height of the texture, in pixels
+         * @param texturePtr pointer to the `ID3D12Resource` texture resource; must be non-zero
+         * @param format     the resource's `DXGI_FORMAT`
+         * @param sampleCnt  sample count of the resource
+         * @param levelCnt   mip level count of the resource
+         */
+        fun makeDirect3D(
+            width: Int,
+            height: Int,
+            texturePtr: NativePointer,
+            format: Int,
+            sampleCnt: Int = 1,
+            levelCnt: Int = 1
+        ): BackendTexture {
+            Stats.onNativeCall()
+            val ptr = _nMakeDirect3DTexture(width, height, texturePtr, format, sampleCnt, levelCnt)
+            if (ptr == NullPointer) throw RuntimeException("Failed to create Direct3D BackendTexture (Direct3D not available on this build?)")
+            return BackendTexture(ptr)
+        }
+
         init {
             staticLoad()
         }
@@ -70,6 +125,24 @@ private external fun _nMakeGL(
     textureId: Int,
     target: Int,
     format: Int
+): NativePointer
+
+@ExternalSymbolName("org_jetbrains_skia_BackendTexture__1nMakeMetal")
+private external fun _nMakeMetal(
+    width: Int,
+    height: Int,
+    texturePtr: NativePointer,
+    isMipmapped: Boolean
+): NativePointer
+
+@ExternalSymbolName("org_jetbrains_skia_BackendTexture__1nMakeDirect3DTexture")
+private external fun _nMakeDirect3DTexture(
+    width: Int,
+    height: Int,
+    texturePtr: NativePointer,
+    format: Int,
+    sampleCnt: Int,
+    levelCnt: Int
 ): NativePointer
 
 @ExternalSymbolName("org_jetbrains_skia_BackendTexture__1nGLTextureParametersModified")
