@@ -1,7 +1,7 @@
 package org.jetbrains.skiko.sample
 
 import kotlinx.cinterop.useContents
-import org.jetbrains.skiko.SkiaLayer
+import org.jetbrains.skiko.GraphicsApi
 import platform.AppKit.NSEvent
 import platform.AppKit.NSTrackingActiveInActiveApp
 import platform.AppKit.NSTrackingArea
@@ -11,10 +11,17 @@ import platform.AppKit.NSViewHeightSizable
 import platform.AppKit.NSViewWidthSizable
 import platform.AppKit.NSWindow
 
-class MacosClocks(layer: SkiaLayer, window: NSWindow) : Clocks(layer::renderApi) {
+/**
+ * Hosts the clock animation in a caller-owned [NSView] and tracks mouse movement. The view's rendering is
+ * driven by `main()` through the public render-context API (a [org.jetbrains.skiko.createRenderContext] over
+ * a `CAMetalLayer` + a [org.jetbrains.skiko.DisplayFrameTicker]); this class no longer touches SkiaLayer.
+ */
+class MacosClocks(window: NSWindow) : Clocks({ GraphicsApi.METAL }) {
+    val view: NSView
+
     init {
-        val nsView = object : NSView(window.frame) {
-            private var trackingArea : NSTrackingArea? = null
+        view = object : NSView(window.frame) {
+            private var trackingArea: NSTrackingArea? = null
 
             override fun updateTrackingAreas() {
                 trackingArea?.let { removeTrackingArea(it) }
@@ -37,8 +44,7 @@ class MacosClocks(layer: SkiaLayer, window: NSWindow) : Clocks(layer::renderApi)
         }
 
         val contentView = window.contentView!!
-        nsView.autoresizingMask = NSViewHeightSizable or NSViewWidthSizable
-        contentView.addSubview(nsView)
-        layer.attachTo(nsView)
+        view.autoresizingMask = NSViewHeightSizable or NSViewWidthSizable
+        contentView.addSubview(view)
     }
 }

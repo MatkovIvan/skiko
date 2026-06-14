@@ -8,8 +8,6 @@ import org.jetbrains.skia.FontMgr
 import org.jetbrains.skia.FontMgrWithFallback
 import org.jetbrains.skia.Typeface
 import org.jetbrains.skia.paragraph.TypefaceFontProviderWithFallback
-import org.jetbrains.skiko.SkiaLayer
-import org.jetbrains.skiko.SkiaLayerRenderDelegate
 import org.jetbrains.skiko.wasm.onWasmReady
 import org.w3c.dom.HTMLCanvasElement
 
@@ -24,10 +22,7 @@ fun main() {
 internal fun runClocksApp() {
     val canvas = document.getElementById("SkikoTarget") as HTMLCanvasElement
     canvas.setAttribute("tabindex", "0")
-    val skiaLayer = SkiaLayer()
-    val clocks = WebClocks(skiaLayer, canvas)
-    skiaLayer.renderDelegate = SkiaLayerRenderDelegate(skiaLayer, clocks)
-    skiaLayer.needRedraw()
+    startRendering(canvas, WebClocks(canvas))
 }
 
 private val notoColorEmoji = "https://storage.googleapis.com/skia-cdn/misc/NotoColorEmoji.ttf"
@@ -36,10 +31,8 @@ private val notoSancSC = "./NotoSansSC-Regular.ttf"
 internal fun runEmojiStoryApp() {
     val canvas = document.getElementById("SkikoTarget") as HTMLCanvasElement
     canvas.setAttribute("tabindex", "0")
-    val skiaLayer = SkiaLayer()
-    val app = EmojiStory()
-    skiaLayer.renderDelegate = SkiaLayerRenderDelegate(skiaLayer, app)
-    skiaLayer.attachTo(canvas)
+    // Start the continuous render loop now; once the fonts below finish loading the next frame picks them up.
+    startRendering(canvas, EmojiStory())
 
     MainScope().launch {
         val notoEmojisBytes = loadRes(notoColorEmoji).toByteArray()
@@ -52,7 +45,5 @@ internal fun runEmojiStoryApp() {
             registerTypeface(notoSansSCTypeface)
         }
         EmojiStory.fontCollection.setDefaultFontManager(FontMgrWithFallback(tfp))
-
-        skiaLayer.needRedraw()
     }
 }

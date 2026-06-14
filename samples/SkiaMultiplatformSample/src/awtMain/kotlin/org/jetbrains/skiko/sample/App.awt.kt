@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalSkikoApi::class)
+
 package org.jetbrains.skiko.sample
 
 import org.jetbrains.skiko.*
@@ -6,20 +8,33 @@ import java.awt.Dimension
 import javax.swing.*
 
 fun main(args: Array<String>) {
-    val skiaLayer = SkiaLayer()
     parseArgs(args)
-    val app = run {
-        //EmojiStory()
-        AwtClocks(skiaLayer)
-    }
-    skiaLayer.renderDelegate = SkiaLayerRenderDelegate(skiaLayer, app)
     SwingUtilities.invokeLater {
+        // Render through the public AWT primitive (SkiaPanel) instead of the deprecated SkiaLayer.
+        val skiaPanel = SkiaPanel()
+        val clocks = AwtClocks(skiaPanel)
+
+        // Scale to device pixels like the old SkiaLayerRenderDelegate did, then play the clocks.
+        skiaPanel.renderDelegate = SkikoRenderDelegate { canvas, width, height, nanoTime ->
+            val scale = skiaPanel.contentScale
+            canvas.scale(scale, scale)
+            clocks.onRender(canvas, (width / scale).toInt(), (height / scale).toInt(), nanoTime)
+        }
+
         val window = JFrame("Skiko example").apply {
             defaultCloseOperation = WindowConstants.EXIT_ON_CLOSE
             preferredSize = Dimension(800, 600)
         }
-        skiaLayer.attachTo(window.contentPane)
-        skiaLayer.needRedraw()
+        window.contentPane.add(skiaPanel)
+
+        // The shared, vsync-aligned frame source replaces the old self-perpetuating needRedraw() loop.
+        val frameTicker = DisplayFrameTicker(skiaPanel)
+        frameTicker.subscribe {
+            skiaPanel.needRender(throttledToVsync = false)
+            frameTicker.scheduleFrame()
+        }
+        frameTicker.scheduleFrame()
+
         window.pack()
         window.isVisible = true
         createWindowsJumpList()

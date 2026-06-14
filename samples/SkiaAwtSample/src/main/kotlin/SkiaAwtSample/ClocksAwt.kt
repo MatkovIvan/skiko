@@ -1,3 +1,5 @@
+@file:OptIn(org.jetbrains.skiko.ExperimentalSkikoApi::class)
+
 package SkiaAwtSample
 
 import org.jetbrains.skia.*
@@ -13,9 +15,9 @@ open class ClocksAwt(
     private val scaleProvider: () -> Float,
     private val renderProvider: () -> GraphicsApi = { GraphicsApi.UNKNOWN }
 ) : SkikoRenderDelegate, MouseMotionListener {
-    constructor(layer: SkiaLayer) : this(
-        { layer.contentScale },
-        { layer.renderApi }
+    constructor(panel: org.jetbrains.skiko.SkiaPanel) : this(
+        { panel.contentScale },
+        { panel.renderApi }
     )
 
     private val typeface = FontMgr.default.makeFromFile("fonts/JetBrainsMono-Regular.ttf")

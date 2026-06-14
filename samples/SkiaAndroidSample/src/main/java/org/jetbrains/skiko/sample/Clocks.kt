@@ -1,6 +1,5 @@
 package org.jetbrains.skiko.sample
 
-import android.view.View
 import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.FontMgr
 import org.jetbrains.skia.Paint
@@ -11,8 +10,8 @@ import org.jetbrains.skia.paragraph.ParagraphBuilder
 import org.jetbrains.skia.paragraph.ParagraphStyle
 import org.jetbrains.skia.paragraph.TextStyle
 import org.jetbrains.skiko.FPSCounter
+import org.jetbrains.skiko.GraphicsApi
 import org.jetbrains.skiko.OS
-import org.jetbrains.skiko.SkiaLayer
 import org.jetbrains.skiko.SkikoRenderDelegate
 import org.jetbrains.skiko.currentSystemTheme
 import org.jetbrains.skiko.hostOs
@@ -20,7 +19,7 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
-class Clocks(private val skiaLayer: SkiaLayer, view: View): SkikoRenderDelegate {
+class Clocks(private val contentScale: () -> Float): SkikoRenderDelegate {
     private val withFps = true
     private val fpsCounter = FPSCounter()
     private val platformYOffset = if (hostOs == OS.Ios) 50f else 5f
@@ -36,12 +35,10 @@ class Clocks(private val skiaLayer: SkiaLayer, view: View): SkikoRenderDelegate 
         .setDefaultFontManager(FontMgr.default)
     private val style = ParagraphStyle()
 
-    init {
-        view.setOnTouchListener { _, event ->
-            xpos = event.x / skiaLayer.contentScale
-            ypos = event.y / skiaLayer.contentScale
-            true
-        }
+    /** Forward a touch from the hosting view, in view (pixel) coordinates. */
+    fun onPointerMove(x: Float, y: Float) {
+        xpos = x / contentScale()
+        ypos = y / contentScale()
     }
 
     override fun onRender(canvas: Canvas, width: Int, height: Int, nanoTime: Long) {
@@ -109,7 +106,7 @@ class Clocks(private val skiaLayer: SkiaLayer, view: View): SkikoRenderDelegate 
 
         val renderInfo = ParagraphBuilder(style, fontCollection)
             .pushStyle(TextStyle().setColor(0xFF000000.toInt()))
-            .addText("Graphics API: ${skiaLayer.renderApi} ✿ﾟ ${currentSystemTheme}${maybeFps}")
+            .addText("Graphics API: ${GraphicsApi.OPENGL} ✿ﾟ ${currentSystemTheme}${maybeFps}")
             .popStyle()
             .build()
         renderInfo.layout(Float.POSITIVE_INFINITY)

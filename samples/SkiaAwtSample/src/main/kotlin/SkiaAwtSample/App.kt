@@ -1,3 +1,5 @@
+@file:OptIn(org.jetbrains.skiko.ExperimentalSkikoApi::class)
+
 package SkiaAwtSample
 
 import kotlinx.coroutines.*
@@ -33,14 +35,14 @@ fun createWindow(title: String, exitOnClose: Boolean) = SwingUtilities.invokeLat
         RenderingHints.VALUE_TEXT_ANTIALIAS_LCD_VBGR -> PixelGeometry.BGR_V
         else -> PixelGeometry.UNKNOWN
     }
-    val skiaLayer = SkiaLayer(pixelGeometry = pixelGeometry)
-    val clocks = ClocksAwt(skiaLayer)
+    val skiaPanel = org.jetbrains.skiko.SkiaPanel(pixelGeometry = pixelGeometry)
+    val clocks = ClocksAwt(skiaPanel)
 
     val window = JFrame(title)
     window.defaultCloseOperation =
         if (exitOnClose) WindowConstants.EXIT_ON_CLOSE else WindowConstants.DISPOSE_ON_CLOSE
     window.background = Color.GREEN
-    window.contentPane.add(skiaLayer)
+    window.contentPane.add(skiaPanel)
 
     // Create menu.
     val menuBar = JMenuBar()
@@ -52,7 +54,7 @@ fun createWindow(title: String, exitOnClose: Boolean) = SwingUtilities.invokeLat
     miFullscreenState.setAccelerator(ctrlI)
     miFullscreenState.addActionListener(object : ActionListener {
         override fun actionPerformed(actionEvent: ActionEvent?) {
-            println("${window.title} is in fullscreen mode: ${skiaLayer.fullscreen}")
+            println("${window.title} is in fullscreen mode: ${skiaPanel.fullscreen}")
         }
     })
 
@@ -61,7 +63,7 @@ fun createWindow(title: String, exitOnClose: Boolean) = SwingUtilities.invokeLat
     miToggleFullscreen.setAccelerator(ctrlF)
     miToggleFullscreen.addActionListener(object : ActionListener {
         override fun actionPerformed(actionEvent: ActionEvent?) {
-            skiaLayer.fullscreen = !skiaLayer.fullscreen
+            skiaPanel.fullscreen = !skiaPanel.fullscreen
         }
     })
 
@@ -72,7 +74,7 @@ fun createWindow(title: String, exitOnClose: Boolean) = SwingUtilities.invokeLat
     miTakeScreenshot.setAccelerator(ctrlS)
     miTakeScreenshot.addActionListener(object : ActionListener {
         override fun actionPerformed(actionEvent: ActionEvent?) {
-            val screenshot = skiaLayer.screenshot()!!
+            val screenshot = skiaPanel.screenshot()!!
             @OptIn(DelicateCoroutinesApi::class)
             GlobalScope.launch(Dispatchers.IO) {
                 val image = screenshot.toBufferedImage()
@@ -87,7 +89,7 @@ fun createWindow(title: String, exitOnClose: Boolean) = SwingUtilities.invokeLat
     miDpiState.setAccelerator(ctrlD)
     miDpiState.addActionListener(object : ActionListener {
         override fun actionPerformed(actionEvent: ActionEvent?) {
-            println("DPI: ${skiaLayer.currentDPI}")
+            println("DPI: ${skiaPanel.currentDPI}")
         }
     })
 
@@ -111,12 +113,27 @@ fun createWindow(title: String, exitOnClose: Boolean) = SwingUtilities.invokeLat
 
     window.setJMenuBar(menuBar)
 
-    skiaLayer.onStateChanged(SkiaLayer.PropertyKind.Renderer) { layer ->
+    skiaPanel.onStateChanged(org.jetbrains.skiko.SkiaPanel.PropertyKind.Renderer) { layer ->
         println("Changed renderer for $layer: new value is ${layer.renderApi}")
     }
 
-    skiaLayer.renderDelegate = SkiaLayerRenderDelegate(skiaLayer, clocks)
-    skiaLayer.addMouseMotionListener(clocks)
+    // Draw through SkiaPanel's render delegate, scaling to device pixels like the old
+    // SkiaLayerRenderDelegate did. Continuous animation is driven by the shared DisplayFrameTicker below.
+    skiaPanel.renderDelegate = SkikoRenderDelegate { canvas, width, height, nanoTime ->
+        val scale = skiaPanel.contentScale
+        canvas.scale(scale, scale)
+        clocks.onRender(canvas, (width / scale).toInt(), (height / scale).toInt(), nanoTime)
+    }
+    skiaPanel.addMouseMotionListener(clocks)
+
+    // The shared, vsync-aligned frame source replaces the old self-perpetuating needRender() loop:
+    // each tick requests a frame and schedules the next one.
+    val frameTicker = DisplayFrameTicker(skiaPanel)
+    frameTicker.subscribe {
+        skiaPanel.needRender(throttledToVsync = false)
+        frameTicker.scheduleFrame()
+    }
+    frameTicker.scheduleFrame()
 
     // Window transparency
     if (System.getProperty("skiko.transparency") == "true") {
@@ -131,10 +148,10 @@ fun createWindow(title: String, exitOnClose: Boolean) = SwingUtilities.invokeLat
          *
          * See `enableTransparentWindow` (skiko/src/awtMain/cpp/windows/window_util.cc)
          */
-        if (hostOs != OS.Windows || skiaLayer.renderApi == GraphicsApi.DIRECT3D) {
+        if (hostOs != OS.Windows || skiaPanel.renderApi == GraphicsApi.DIRECT3D) {
             window.background = Color(0, 0, 0, 0)
         }
-        skiaLayer.transparency = true
+        skiaPanel.transparency = true
 
         /*
          * Windows makes clicks on transparent pixels fall through, but it doesn't work
@@ -149,15 +166,15 @@ fun createWindow(title: String, exitOnClose: Boolean) = SwingUtilities.invokeLat
             contentPane.isOpaque = true
         }
     } else {
-        skiaLayer.background = Color.LIGHT_GRAY
+        skiaPanel.background = Color.LIGHT_GRAY
     }
 
     // MANDATORY: set window preferred size before calling pack()
     window.preferredSize = Dimension(800, 600)
     window.pack()
-    skiaLayer.disableTitleBar(64f)
+    skiaPanel.disableTitleBar(64f)
     window.pack()
-    skiaLayer.paint(window.graphics)
+    skiaPanel.paint(window.graphics)
     window.isVisible = true
 }
 

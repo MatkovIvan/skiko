@@ -1,14 +1,18 @@
+@file:OptIn(org.jetbrains.skiko.ExperimentalSkikoApi::class)
+
 package org.jetbrains.skiko.sample
 
-import org.jetbrains.skiko.SkiaLayer
+import org.jetbrains.skiko.SkiaPanel
+import java.awt.Cursor
 import java.awt.event.MouseEvent
 import java.awt.event.MouseMotionListener
 import java.awt.event.MouseWheelEvent
 import java.awt.event.MouseWheelListener
 
-class AwtClocks(private val layer: SkiaLayer) : Clocks(layer::renderApi), MouseMotionListener, MouseWheelListener {
+class AwtClocks(private val panel: SkiaPanel) : Clocks(panel::renderApi), MouseMotionListener, MouseWheelListener {
     init {
-        layer.addMouseMotionListener(this)
+        panel.addMouseMotionListener(this)
+        panel.addMouseWheelListener(this)
     }
 
     override fun mouseDragged(event: MouseEvent) {
@@ -19,11 +23,9 @@ class AwtClocks(private val layer: SkiaLayer) : Clocks(layer::renderApi), MouseM
     }
 
     override fun mouseMoved(event: MouseEvent) {
-        if (event.x > 200) {
-            layer.component.cursor = Cursor.HAND_CURSOR
-        } else {
-            layer.component.cursor = Cursor.DEFAULT_CURSOR
-        }
+        panel.cursor =
+            if (event.x > 200) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            else Cursor.getDefaultCursor()
         xpos = event.x.toDouble()
         ypos = event.y.toDouble()
     }

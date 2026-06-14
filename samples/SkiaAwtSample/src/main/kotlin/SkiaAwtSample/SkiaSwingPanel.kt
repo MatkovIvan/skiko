@@ -4,14 +4,15 @@ package SkiaAwtSample
 
 import org.jetbrains.skiko.ClipComponent
 import org.jetbrains.skiko.ExperimentalSkikoApi
+import org.jetbrains.skiko.SkiaPanel
+import org.jetbrains.skiko.SkiaRenderMode
 import org.jetbrains.skiko.SkikoRenderDelegate
-import org.jetbrains.skiko.swing.SkiaSwingLayer
 import java.awt.Color
 import java.awt.Component
 import javax.swing.JLayeredPane
 
 class SkiaSwingPanel(skikoView: SkikoRenderDelegate) : JLayeredPane() {
-    val layer = SkiaSwingLayer(skikoView)
+    val layer = SkiaPanel(renderMode = SkiaRenderMode.SwingComposited).apply { renderDelegate = skikoView }
 
     init {
         layout = null

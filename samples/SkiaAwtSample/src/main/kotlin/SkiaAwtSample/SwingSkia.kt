@@ -1,6 +1,9 @@
+@file:OptIn(org.jetbrains.skiko.ExperimentalSkikoApi::class)
+
 package SkiaAwtSample
 
-import org.jetbrains.skiko.SkiaLayerRenderDelegate
+import org.jetbrains.skiko.DisplayFrameTicker
+import org.jetbrains.skiko.SkikoRenderDelegate
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
@@ -86,8 +89,20 @@ fun swingSkia() = SwingUtilities.invokeLater {
 private fun getSkiaPanel(): SkiaPanel {
     return SkiaPanel().apply {
         val clocks = ClocksAwt(layer)
-        layer.renderDelegate = SkiaLayerRenderDelegate(layer, clocks)
+        layer.renderDelegate = SkikoRenderDelegate { canvas, width, height, nanoTime ->
+            val scale = layer.contentScale
+            canvas.scale(scale, scale)
+            clocks.onRender(canvas, (width / scale).toInt(), (height / scale).toInt(), nanoTime)
+        }
         layer.addMouseMotionListener(clocks)
+        // Drive continuous animation from the shared frame ticker; closed in SkiaPanel.removeNotify.
+        val ticker = DisplayFrameTicker(layer)
+        ticker.subscribe {
+            layer.needRender(throttledToVsync = false)
+            ticker.scheduleFrame()
+        }
+        ticker.scheduleFrame()
+        frameTicker = ticker
         val btnPanelOK = JPanel()
         btnPanelOK.layout = BorderLayout(0, 0)
         btnPanelOK.background = Color.white
