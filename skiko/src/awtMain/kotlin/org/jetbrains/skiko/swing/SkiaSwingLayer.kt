@@ -2,7 +2,7 @@ package org.jetbrains.skiko.swing
 
 import org.jetbrains.skia.PixelGeometry
 import org.jetbrains.skiko.ExperimentalSkikoApi
-import org.jetbrains.skiko.RenderFactory
+import org.jetbrains.skiko.redrawer.RenderContextProvider
 import org.jetbrains.skiko.SkiaLayerAnalytics
 import org.jetbrains.skiko.SkiaLayerProperties
 import org.jetbrains.skiko.SkiaPanel
@@ -34,7 +34,7 @@ open class SkiaSwingLayer(
 ) : SkiaPanel(
     accessibleContextProvider,
     properties,
-    RenderFactory.Default,
+    RenderContextProvider.Default,
     analytics,
     PixelGeometry.UNKNOWN,
     SkiaRenderMode.SwingComposited,

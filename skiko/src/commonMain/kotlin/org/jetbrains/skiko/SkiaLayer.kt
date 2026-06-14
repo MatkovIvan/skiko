@@ -3,7 +3,6 @@ package org.jetbrains.skiko
 import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.Picture
 import org.jetbrains.skia.PixelGeometry
-import org.jetbrains.skiko.context.ContextHandler
 
 /**
  * Generic layer for Skiko rendering.
@@ -102,8 +101,4 @@ internal class LayerDrawScope(
         scaledLayerWidth = (layerWidth * scale).toInt().coerceAtLeast(0),
         scaledLayerHeight = (layerHeight * scale).toInt().coerceAtLeast(0)
     )
-
-    internal fun ContextHandler.draw() {
-        this@LayerDrawScope.draw()
-    }
 }

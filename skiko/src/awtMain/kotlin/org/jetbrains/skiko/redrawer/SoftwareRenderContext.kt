@@ -2,33 +2,37 @@
 
 package org.jetbrains.skiko.redrawer
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import org.jetbrains.skia.*
 import org.jetbrains.skiko.ExperimentalSkikoApi
 import org.jetbrains.skiko.GraphicsApi
 import org.jetbrains.skiko.OS
-import org.jetbrains.skiko.RenderContext
 import org.jetbrains.skiko.RenderException
+import org.jetbrains.skiko.SkiaLayerProperties
 import org.jetbrains.skiko.hostArch
 import org.jetbrains.skiko.hostOs
 import org.jetbrains.skiko.SkiaPanel
 import org.jetbrains.skiko.context.SoftwareDrawTarget
+import org.jetbrains.skiko.context.rasterizeFrame
+import org.jetbrains.skiko.layerFrameLimiter
 import java.awt.Color
 import java.awt.Transparency
 import java.awt.color.ColorSpace
 import java.awt.image.*
 
 /**
- * The software (CPU raster) [RenderContext] for AWT on-screen rendering. [acquireSurface] hands back a raster
- * [Surface] drawing straight into a reused [Bitmap]; [present] reads those pixels back and blits them onto the
- * layer's [java.awt.Graphics]. No GPU context ([directContext] is `null`), no natives. Standalone — it reads
- * its draw target, render API and pixel geometry from [layer], so the factory can create it directly.
+ * The software (CPU raster) on-screen [AwtRenderContext]. [acquireSurface] hands back a raster [Surface]
+ * drawing straight into a reused [Bitmap]; [present] reads those pixels back and blits them onto the layer's
+ * [java.awt.Graphics]. No GPU context ([directContext] is `null`), no natives. Standalone — it reads its draw
+ * target, render API and pixel geometry from [layer], so the factory can create it directly.
  *
- * This is the former `SoftwareContextHandler`, renamed to its role and decoupled from the `ContextHandler`
- * legacy base.
+ * Former `SoftwareContextHandler` + the loop/frame-limit of `SoftwareRedrawer`, folded together.
  */
 internal class SoftwareRenderContext(
     private val layer: SkiaPanel,
-) : RenderContext {
+    properties: SkiaLayerProperties,
+) : AwtRenderContext {
     private val pixelGeometry: PixelGeometry get() = layer.pixelGeometry
     private val target = object : SoftwareDrawTarget {
         override val graphics get() = layer.requireBackedLayer.getGraphics()
@@ -50,8 +54,30 @@ internal class SoftwareRenderContext(
     private var currentWidth = 0
     private var currentHeight = 0
 
+    private val frameJob = if (properties.isVsyncEnabled && properties.isVsyncFramelimitFallbackEnabled) Job() else null
+    private val frameLimiter = frameJob?.let { layerFrameLimiter(CoroutineScope(it), layer.requireBackedLayer) }
+
     override val graphicsApi: GraphicsApi get() = layer.renderApi
     override val directContext: DirectContext? get() = null
+    override val deviceName: String get() = "Software"
+    override val renderInfo: String get() = rendererInfo()
+
+    override fun isTransparentBackgroundSupported(): Boolean {
+        // TODO: why Software rendering has another transparency logic from the beginning
+        return hostOs == OS.MacOS
+    }
+
+    override suspend fun paceBeforeFrame() {
+        frameLimiter?.awaitNextFrame()
+    }
+
+    override suspend fun renderFrame(width: Int, height: Int, immediate: Boolean, render: (Canvas) -> Unit) {
+        if (width > 0 && height > 0) {
+            val surface = acquireSurface(width, height)
+            surface.canvas.rasterizeFrame { render(this) }
+            present()
+        }
+    }
 
     override fun acquireSurface(width: Int, height: Int): Surface {
         if (width <= 0 || height <= 0) throw RenderException("Software surface needs a positive size (${width}x$height)")
@@ -103,6 +129,7 @@ internal class SoftwareRenderContext(
             "OS: ${hostOs.id} ${hostArch.id}\n"
 
     override fun close() {
+        frameJob?.cancel()
         disposeSurface()
         storage.close()
     }

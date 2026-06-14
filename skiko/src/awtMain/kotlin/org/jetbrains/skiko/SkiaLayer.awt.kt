@@ -1,6 +1,7 @@
 package org.jetbrains.skiko
 
 import org.jetbrains.skia.PixelGeometry
+import org.jetbrains.skiko.redrawer.RenderContextProvider
 import java.awt.Component
 import javax.accessibility.AccessibleContext
 
@@ -17,10 +18,10 @@ import javax.accessibility.AccessibleContext
 actual open class SkiaLayer internal constructor(
     accessibleContextProvider: ((Component) -> AccessibleContext)? = null,
     properties: SkiaLayerProperties,
-    renderFactory: RenderFactory = RenderFactory.Default,
+    renderContextProvider: RenderContextProvider = RenderContextProvider.Default,
     analytics: SkiaLayerAnalytics = SkiaLayerAnalytics.Empty,
     pixelGeometry: PixelGeometry = PixelGeometry.UNKNOWN,
-) : SkiaPanel(accessibleContextProvider, properties, renderFactory, analytics, pixelGeometry) {
+) : SkiaPanel(accessibleContextProvider, properties, renderContextProvider, analytics, pixelGeometry) {
 
     constructor(
         accessibleContextProvider: ((Component) -> AccessibleContext)? = null,
@@ -38,7 +39,7 @@ actual open class SkiaLayer internal constructor(
             frameBuffering,
             renderApi
         ),
-        RenderFactory.Default,
+        RenderContextProvider.Default,
         analytics,
         pixelGeometry
     )
@@ -51,7 +52,7 @@ actual open class SkiaLayer internal constructor(
     ) : this(
         accessibleContextProvider,
         properties,
-        RenderFactory.Default,
+        RenderContextProvider.Default,
         analytics,
         pixelGeometry
     )

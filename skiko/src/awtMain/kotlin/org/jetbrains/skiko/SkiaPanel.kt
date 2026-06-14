@@ -6,8 +6,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.jetbrains.skia.*
 import org.jetbrains.skiko.internal.fastForEach
-import org.jetbrains.skiko.redrawer.Redrawer
+import org.jetbrains.skiko.redrawer.AwtRenderContext
+import org.jetbrains.skiko.redrawer.OnScreenRenderer
 import org.jetbrains.skiko.redrawer.RedrawerManager
+import org.jetbrains.skiko.redrawer.RenderContextFactory
+import org.jetbrains.skiko.redrawer.RenderContextProvider
 import org.jetbrains.skiko.swing.SwingLayerProperties
 import org.jetbrains.skiko.swing.SwingRedrawer
 import org.jetbrains.skiko.swing.createSwingRedrawer
@@ -66,7 +69,7 @@ enum class SkiaRenderMode {
 open class SkiaPanel internal constructor(
     accessibleContextProvider: ((Component) -> AccessibleContext)? = null,
     val properties: SkiaLayerProperties = SkiaLayerProperties(),
-    private val renderFactory: RenderFactory = RenderFactory.Default,
+    private val renderContextProvider: RenderContextProvider = RenderContextProvider.Default,
     private val analytics: SkiaLayerAnalytics = SkiaLayerAnalytics.Empty,
     val pixelGeometry: PixelGeometry = PixelGeometry.UNKNOWN,
     val renderMode: SkiaRenderMode = SkiaRenderMode.DirectSurface,
@@ -78,7 +81,7 @@ open class SkiaPanel internal constructor(
         analytics: SkiaLayerAnalytics = SkiaLayerAnalytics.Empty,
         pixelGeometry: PixelGeometry = PixelGeometry.UNKNOWN,
         renderMode: SkiaRenderMode = SkiaRenderMode.DirectSurface,
-    ) : this(null, properties, RenderFactory.Default, analytics, pixelGeometry, renderMode)
+    ) : this(null, properties, RenderContextProvider.Default, analytics, pixelGeometry, renderMode)
 
     internal companion object {
         init {
@@ -365,21 +368,36 @@ open class SkiaPanel internal constructor(
     @Volatile
     private var isDisposed = false
 
-    // --- DirectSurface engine (on-screen Redrawer) ---
+    // --- DirectSurface engine (on-screen RenderContext + a generic RenderExecutor loop) ---
 
-    private val redrawerManager: RedrawerManager<Redrawer>? =
-        if (isDirect) RedrawerManager(
-            defaultRenderApi = properties.renderApi,
-            redrawerFactory = { renderApi, oldRedrawer ->
-                oldRedrawer?.dispose()
-                renderFactory.createRedrawer(this, renderApi, analytics, properties).also {
-                    it.syncBounds()
-                }
-            },
+    private val renderContextFactory: RenderContextFactory? =
+        if (isDirect) RenderContextFactory(
+            layer = this,
+            properties = properties,
+            provider = renderContextProvider,
             onRenderApiChanged = { notifyChange(PropertyKind.Renderer) }
         ) else null
 
-    internal val redrawer: Redrawer? get() = redrawerManager?.redrawer
+    private var onScreenRenderer: OnScreenRenderer? = null
+
+    internal val redrawer: OnScreenRenderer? get() = onScreenRenderer
+
+    /** (Re)create the on-screen render context via the fallback factory and wrap it in a fresh loop. */
+    private fun rebuildOnScreenRenderer(recreation: Boolean) {
+        onScreenRenderer?.dispose()
+        @OptIn(ExperimentalSkikoApi::class)
+        val ctx = renderContextFactory!!.create(recreation) as AwtRenderContext
+        onScreenRenderer = OnScreenRenderer(this, ctx, analytics).also { it.syncBounds() }
+    }
+
+    /**
+     * Called from the draw scope on a [RenderException]: drop the failed API and fall forward to the next
+     * one ([recreation] = false, matching the old `findNextWorkingRenderApi()` default — `true` would re-add
+     * the just-failed API and retry it forever).
+     */
+    internal fun recreateOnScreenRendererAfterFailure() {
+        rebuildOnScreenRenderer(recreation = false)
+    }
 
     /**
      * The live [RenderContext] backing this panel's on-screen rendering, exposed for GPU interop: read its
@@ -394,7 +412,7 @@ open class SkiaPanel internal constructor(
      * is `null` until the first frame initialises the GPU context. Touch it only on the render thread.
      */
     @ExperimentalSkikoApi
-    val renderContext: RenderContext? get() = redrawer?.renderContext
+    val renderContext: RenderContext? get() = onScreenRenderer?.ctx
 
     // --- SwingComposited engine (offscreen SwingRedrawer, blit in paint) ---
 
@@ -431,9 +449,10 @@ open class SkiaPanel internal constructor(
     private val swingRedrawer: SwingRedrawer? get() = swingRedrawerManager?.redrawer
 
     var renderApi: GraphicsApi
-        get() = (redrawerManager ?: swingRedrawerManager!!).renderApi
+        get() = renderContextFactory?.renderApi ?: swingRedrawerManager!!.renderApi
         set(value) {
-            redrawerManager?.renderApi = value
+            // On-screen the active API is owned by the RenderContextFactory (set when a context is created);
+            // only the SwingComposited selector tracks an externally-set API.
             swingRedrawerManager?.renderApi = value
         }
 
@@ -454,7 +473,11 @@ open class SkiaPanel internal constructor(
         isDisposed = false
         backedLayer?.init()
         pictureRecorder = PictureRecorder()
-        (redrawerManager ?: swingRedrawerManager)?.findNextWorkingRenderApi(recreation)
+        if (isDirect) {
+            rebuildOnScreenRenderer(recreation)
+        } else {
+            swingRedrawerManager?.findNextWorkingRenderApi(recreation)
+        }
         isInited = true
     }
 
@@ -476,9 +499,9 @@ open class SkiaPanel internal constructor(
     open fun dispose() {
         check(isEventDispatchThread()) { "Method should be called from AWT event dispatch thread" }
         if (isInited && !isDisposed) {
-            // we should dispose redrawer first (to cancel `draw` in rendering thread)
-            redrawer?.dispose()
-            redrawerManager?.dispose()
+            // we should dispose the on-screen renderer first (to cancel `draw` in rendering thread)
+            onScreenRenderer?.dispose()
+            renderContextFactory?.dispose()
             swingRedrawer?.dispose()
             swingRedrawerManager?.dispose()
             if (pictureOwnedByPanel) picture?.instance?.close()
@@ -784,7 +807,7 @@ open class SkiaPanel internal constructor(
         } catch (e: RenderException) {
             if (!isDisposed) {
                 Logger.warn(e) { "Exception in draw scope" }
-                redrawerManager?.findNextWorkingRenderApi()
+                recreateOnScreenRendererAfterFailure()
                 redrawer?.renderImmediately()
             }
         }

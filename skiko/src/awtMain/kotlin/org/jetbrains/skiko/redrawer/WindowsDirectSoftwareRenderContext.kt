@@ -7,6 +7,7 @@ import org.jetbrains.skia.impl.InteropPointer
 import org.jetbrains.skia.impl.interopScope
 import org.jetbrains.skiko.ExperimentalSkikoApi
 import org.jetbrains.skiko.RenderException
+import org.jetbrains.skiko.SkiaLayerProperties
 import org.jetbrains.skiko.SkiaPanel
 
 /**
@@ -15,7 +16,10 @@ import org.jetbrains.skiko.SkiaPanel
  *
  * Former `WindowsSoftwareRedrawer.createDevice`.
  */
-internal class WindowsDirectSoftwareRenderContext(layer: SkiaPanel) : DirectSoftwareRenderContext() {
+internal class WindowsDirectSoftwareRenderContext(
+    layer: SkiaPanel,
+    properties: SkiaLayerProperties,
+) : DirectSoftwareRenderContext(layer, properties) {
     init {
         device = interopScope {
             createDevice(

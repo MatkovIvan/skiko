@@ -2,6 +2,8 @@
 
 package org.jetbrains.skiko.redrawer
 
+import kotlinx.coroutines.withContext
+import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.DirectContext
 import org.jetbrains.skia.PixelGeometry
 import org.jetbrains.skia.Surface
@@ -10,6 +12,7 @@ import org.jetbrains.skia.impl.InteropPointer
 import org.jetbrains.skia.impl.getPtr
 import org.jetbrains.skia.impl.interopScope
 import org.jetbrains.skiko.*
+import org.jetbrains.skiko.context.rasterizeFrame
 import java.lang.ref.Reference
 
 /**
@@ -24,7 +27,8 @@ internal class Direct3DRenderContext(
     private val layer: SkiaPanel,
     private val properties: SkiaLayerProperties,
     private val pixelGeometry: PixelGeometry = layer.pixelGeometry,
-) : RenderContext {
+) : AwtRenderContext {
+    private val drawLock = Any()
     val adapterName: String
     val adapterMemorySize: Long
     private var _device: Long
@@ -50,6 +54,28 @@ internal class Direct3DRenderContext(
 
     override val graphicsApi: GraphicsApi get() = GraphicsApi.DIRECT3D
     override val directContext: DirectContext? get() = context
+    override val deviceName: String get() = adapterName
+    override val renderInfo: String get() = rendererInfo()
+    override fun isTransparentBackgroundSupported(): Boolean = defaultIsTransparentBackgroundSupported(layer.fullscreen)
+
+    override suspend fun renderFrame(width: Int, height: Int, immediate: Boolean, render: (Canvas) -> Unit) {
+        if (immediate) {
+            performFrame(width, height, render, SkikoProperties.windowsWaitForVsyncOnRedrawImmediately)
+        } else {
+            // Move drawing off the EDT to keep FPS stable.
+            withContext(dispatcherToBlockOn) {
+                performFrame(width, height, render, properties.isVsyncEnabled)
+            }
+        }
+    }
+
+    private fun performFrame(width: Int, height: Int, render: (Canvas) -> Unit, withVsync: Boolean) = synchronized(drawLock) {
+        // No size guard: D3D coerces to 1×1 in acquireSurface and runs the whole pipeline.
+        val surface = acquireSurface(width, height)
+        surface.canvas.rasterizeFrame { render(this) }
+        present()
+        swap(withVsync)
+    }
 
     internal val direct3DAdapterPtr: Long get() = getDirectXAdapterPointer(device)
     internal val direct3DDevicePtr: Long get() = getDirectXDevicePointer(device)

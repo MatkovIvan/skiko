@@ -22,12 +22,12 @@ import org.jetbrains.skiko.makeGLContext
 import org.jetbrains.skiko.makeGLRenderTarget
 
 /**
- * The OpenGL [RenderContext] for AWT on-screen rendering. It binds a Skia GL [DirectContext]/[Surface] to
- * the **currently bound** GL framebuffer; the GL context/make-current and buffer swap are owned by the
- * driver ([org.jetbrains.skiko.redrawer.LinuxOpenGLRedrawer]/`WindowsOpenGLRedrawer`). Must be used with
- * that driver's GL context current.
+ * The shared OpenGL GPU binder: it binds a Skia GL [DirectContext]/[Surface] to the **currently bound** GL
+ * framebuffer. The GL device/make-current and buffer swap are owned by the composing per-OS on-screen
+ * context (`LinuxOpenGLRenderContext`/`WindowsOpenGLRenderContext`), which calls [acquireSurface]/[present]
+ * with its GL context current.
  *
- * Former `OpenGLContextHandler`, decoupled from the `ContextHandler` legacy base. One instance per driver.
+ * Former `OpenGLContextHandler`, decoupled from the `ContextHandler` legacy base. One instance per context.
  */
 internal class OpenGLRenderContext(
     private val gpuResourceCacheLimit: Long,

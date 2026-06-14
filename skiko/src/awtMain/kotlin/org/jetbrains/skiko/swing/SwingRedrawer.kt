@@ -6,7 +6,7 @@ import java.awt.Graphics2D
 /**
  * Provides an interface for requesting content to be drawn on a [java.awt.Graphics2D].
  *
- * See [org.jetbrains.skiko.redrawer.Redrawer] redrawer for on-screen rendering
+ * See `org.jetbrains.skiko.redrawer.AwtRenderContext` for on-screen rendering
  */
 internal interface SwingRedrawer {
     /**

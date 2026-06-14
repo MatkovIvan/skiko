@@ -9,8 +9,10 @@ import org.jetbrains.skia.PixelGeometry
 import org.jetbrains.skia.Surface
 import org.jetbrains.skia.SurfaceColorFormat
 import org.jetbrains.skia.SurfaceOrigin
+import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.SurfaceProps
 import org.jetbrains.skiko.*
+import org.jetbrains.skiko.context.rasterizeFrame
 
 /**
  * The ANGLE (GL-on-Direct3D) [RenderContext] for AWT on-screen rendering. It **owns** the ANGLE device
@@ -24,7 +26,9 @@ internal class AngleRenderContext(
     private val layer: SkiaPanel,
     properties: SkiaLayerProperties,
     private val pixelGeometry: PixelGeometry = layer.pixelGeometry,
-) : RenderContext {
+) : AwtRenderContext {
+    private val isVsyncEnabled = properties.isVsyncEnabled
+    private val drawLock = Any()
     private var _device: Long = layer.requireBackedLayer.useDrawingSurfacePlatformInfo { platformInfo ->
         createAngleDevice(platformInfo, layer.transparency).takeIf { it != 0L }
             ?: throw RenderException("Failed to create ANGLE device.")
@@ -52,6 +56,18 @@ internal class AngleRenderContext(
 
     override val graphicsApi: GraphicsApi get() = GraphicsApi.ANGLE
     override val directContext: DirectContext? get() = context
+    override val deviceName: String? get() = adapterName
+    override val renderInfo: String get() = rendererInfo()
+    override fun isTransparentBackgroundSupported(): Boolean = defaultIsTransparentBackgroundSupported(layer.fullscreen)
+
+    override suspend fun renderFrame(width: Int, height: Int, immediate: Boolean, render: (Canvas) -> Unit) = synchronized(drawLock) {
+        if (width > 0 && height > 0) {
+            val surface = acquireSurface(width, height)
+            surface.canvas.rasterizeFrame { render(this) }
+            present()
+            swap(if (immediate) SkikoProperties.windowsWaitForVsyncOnRedrawImmediately else isVsyncEnabled)
+        }
+    }
 
     /** Make the ANGLE GL context current; used by the driver around a frame. */
     fun makeCurrent() = makeCurrent(device)

@@ -3,7 +3,10 @@
 package org.jetbrains.skiko.redrawer
 
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.jetbrains.skia.BackendRenderTarget
+import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.ColorSpace
 import org.jetbrains.skia.DirectContext
 import org.jetbrains.skia.PixelGeometry
@@ -12,6 +15,10 @@ import org.jetbrains.skia.SurfaceColorFormat
 import org.jetbrains.skia.SurfaceOrigin
 import org.jetbrains.skia.SurfaceProps
 import org.jetbrains.skiko.*
+import org.jetbrains.skiko.context.rasterizeFrame
+import javax.swing.SwingUtilities.convertPoint
+import javax.swing.SwingUtilities.getRootPane
+import javax.swing.SwingUtilities.isEventDispatchThread
 
 /**
  * Holder for the pointer to a native MetalDevice (see "MetalDevice.h"): the [CAMetalLayer], [MTLDevice],
@@ -34,9 +41,12 @@ internal class MetalRenderContext(
     private val layer: SkiaPanel,
     properties: SkiaLayerProperties,
     private val pixelGeometry: PixelGeometry = layer.pixelGeometry,
-) : RenderContext {
+) : AwtRenderContext {
 
     internal val adapter: MetalAdapter = chooseMetalAdapter(properties.adapterPriority)
+
+    private val vSyncer = if (properties.isVsyncEnabled) MetalVSyncer(layer.windowHandle) else null
+    private val drawLock = Any()
 
     private var _device: MetalDevice? = run {
         val numberOfBuffers = properties.frameBuffering.numberOfBuffers() ?: 0 // zero means default for system
@@ -62,9 +72,51 @@ internal class MetalRenderContext(
 
     override val graphicsApi: GraphicsApi get() = GraphicsApi.METAL
     override val directContext: DirectContext? get() = context
+    override val deviceName: String? get() = adapter.name
+    override val renderInfo: String get() = rendererInfo()
+    override fun isTransparentBackgroundSupported(): Boolean = defaultIsTransparentBackgroundSupported(layer.fullscreen)
+
+    // Metal splits non-vsync-throttled updates onto a separate executor for input latency.
+    override val separatesUpdateAndDraw: Boolean get() = true
 
     internal val metalDeviceObjcPtr: Long get() = getMetalDevicePointer(device.ptr)
     internal val metalCommandQueueObjcPtr: Long get() = getMetalCommandQueuePointer(device.ptr)
+
+    override suspend fun renderFrame(width: Int, height: Int, immediate: Boolean, render: (Canvas) -> Unit) {
+        if (immediate) {
+            performFrame(width, height, render)
+            // Drawing immediately in Metal loses frames if there are >2 between consecutive vsyncs.
+            if (SkikoProperties.macOSWaitForPreviousFrameVsyncOnRedrawImmediately) {
+                vSyncer?.waitForVSync()
+            }
+        } else {
+            // Move drawing off the EDT to keep FPS stable (see SkiaLayerPerformanceTest).
+            withContext(dispatcherToBlockOn) {
+                performFrame(width, height, render)
+            }
+            // When the window is occluded, don't redraw fast (battery).
+            if (isWindowOccluded) {
+                withTimeoutOrNull(300) {
+                    @Suppress("ControlFlowWithEmptyBody")
+                    while (occlusionChannel.receive()) { }
+                }
+            }
+        }
+    }
+
+    private fun performFrame(width: Int, height: Int, render: (Canvas) -> Unit) = synchronized(drawLock) {
+        if (width > 0 && height > 0) {
+            autoreleasepool {
+                val surface = acquireSurface(width, height)
+                surface.canvas.rasterizeFrame { render(this) }
+                present()
+            }
+        }
+    }
+
+    override suspend fun paceAfterFrame() {
+        vSyncer?.waitForVSync()
+    }
 
     override fun acquireSurface(width: Int, height: Int): Surface {
         val context = context ?: DirectContext(makeMetalContext(device.ptr)).also {
@@ -94,13 +146,22 @@ internal class MetalRenderContext(
         Logger.debug { "MetalRenderContext finished drawing frame" }
     }
 
-    /** Position+size the heavyweight Metal drawable in the window (was `MetalRedrawer.syncBounds`). */
-    fun resize(x: Int, y: Int, width: Int, height: Int, contentScale: Float) {
-        setContentScale(device.ptr, contentScale)
+    /** Position+size the heavyweight Metal drawable in the window from the layer's current AWT bounds. */
+    override fun syncBounds() = synchronized(drawLock) {
+        check(isEventDispatchThread()) { "Method should be called from AWT event dispatch thread" }
+        val rootPane = getRootPane(layer)
+        val globalPosition = convertPoint(layer.requireBackedLayer, 0, 0, rootPane)
+        val x = globalPosition.x
+        val y = rootPane.height - globalPosition.y - layer.height
+        val width = layer.requireBackedLayer.width.coerceAtLeast(0)
+        val height = layer.requireBackedLayer.height.coerceAtLeast(0)
+        Logger.debug { "MetalRenderContext#syncBounds $this {x: $x y: $y width: $width height: $height} rootPane: ${rootPane.size}" }
+        setContentScale(device.ptr, layer.contentScale)
         resizeLayers(device.ptr, x, y, width, height)
     }
 
-    fun setVisible(isVisible: Boolean) {
+    override fun setVisible(isVisible: Boolean) {
+        Logger.debug { "MetalRenderContext#setVisible($isVisible)" }
         setLayerVisible(device.ptr, isVisible)
     }
 
@@ -124,6 +185,7 @@ internal class MetalRenderContext(
         _device?.let { disposeDevice(it.ptr) }
         adapter.dispose()
         _device = null
+        vSyncer?.dispose()
     }
 
     private fun disposeSurface() {

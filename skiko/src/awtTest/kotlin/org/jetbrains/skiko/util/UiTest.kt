@@ -3,6 +3,7 @@ package org.jetbrains.skiko.util
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.skiko.*
+import org.jetbrains.skiko.redrawer.RenderContextProvider
 import org.jetbrains.skiko.swing.SkiaSwingLayer
 import org.junit.Assert.assertEquals
 import org.junit.Assume.assumeFalse
@@ -49,13 +50,13 @@ internal class UiTestScope(
     fun UiTestWindow(
         properties: SkiaLayerProperties = SkiaLayerProperties(),
         analytics: SkiaLayerAnalytics = SkiaLayerAnalytics.Empty,
-        renderFactory: RenderFactory = RenderFactory.Default,
+        renderContextProvider: RenderContextProvider = RenderContextProvider.Default,
         setupContent: UiTestWindow.() -> Unit = { contentPane.add(layer) }
     ) = object : UiTestWindow() {
         override val layer: SkiaLayer = SkiaLayer(
             properties = properties.copy(renderApi = renderApi),
             analytics = analytics,
-            renderFactory = renderFactory
+            renderContextProvider = renderContextProvider
         )
 
         init {
