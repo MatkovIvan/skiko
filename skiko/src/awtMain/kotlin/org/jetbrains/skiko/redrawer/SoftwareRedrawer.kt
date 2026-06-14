@@ -3,8 +3,7 @@ package org.jetbrains.skiko.redrawer
 import kotlinx.coroutines.*
 import org.jetbrains.skiko.*
 import org.jetbrains.skiko.layerFrameLimiter
-import org.jetbrains.skiko.context.SoftwareContextHandler
-import org.jetbrains.skiko.context.SoftwareDrawTarget
+import org.jetbrains.skiko.context.rasterizeFrame
 
 internal class SoftwareRedrawer(
     private val layer: SkiaPanel,
@@ -15,21 +14,13 @@ internal class SoftwareRedrawer(
         onDeviceChosen("Software")
     }
 
-    private val drawTarget = object : SoftwareDrawTarget {
-        override val graphics get() = layer.requireBackedLayer.getGraphics()
-        override val width get() = layer.width
-        override val height get() = layer.height
-        override val isFullscreen get() = layer.fullscreen
-        override val isTransparent get() = layer.transparency
-    }
-
-    // SoftwareRedrawer serves both SOFTWARE_COMPAT and SOFTWARE_FAST (see Actuals.awt.kt), so the
-    // reported API must follow the selected one (layer.renderApi) rather than a hardcoded constant.
-    private val contextHandler = SoftwareContextHandler(layer.renderApi, drawTarget, properties.gpuResourceCacheLimit, layer.pixelGeometry, layer::draw)
-    override val renderInfo: String get() = contextHandler.rendererInfo()
+    // SoftwareRenderContext is standalone — it reads its draw target + render API (SOFTWARE_COMPAT or
+    // SOFTWARE_FAST) + pixel geometry straight from the layer.
+    private val ctx = SoftwareRenderContext(layer)
+    override val renderInfo: String get() = ctx.rendererInfo()
 
     @OptIn(ExperimentalSkikoApi::class)
-    override val renderContext: RenderContext get() = contextHandler
+    override val renderContext: RenderContext get() = ctx
 
     private val frameJob = if (properties.isVsyncEnabled && properties.isVsyncFramelimitFallbackEnabled) Job() else null
     private val frameLimiter = frameJob?.let {
@@ -41,7 +32,7 @@ internal class SoftwareRedrawer(
 
         if (layer.isShowing) {
             update()
-            inDrawScope { contextHandler.draw() }
+            inDrawScope { performDraw() }
         }
     }
 
@@ -52,7 +43,7 @@ internal class SoftwareRedrawer(
     override fun dispose() {
         frameJob?.cancel()
         frameExecutor.close()
-        contextHandler.dispose()
+        ctx.close()
         super.dispose()
     }
 
@@ -65,8 +56,16 @@ internal class SoftwareRedrawer(
         update()
         inDrawScope {
             if (!isDisposed) { // Redrawer may be disposed in user code, during `update`
-                contextHandler.draw()
+                performDraw()
             }
+        }
+    }
+
+    private fun LayerDrawScope.performDraw() {
+        if (scaledLayerWidth > 0 && scaledLayerHeight > 0) {
+            val surface = ctx.acquireSurface(scaledLayerWidth, scaledLayerHeight)
+            surface.canvas.rasterizeFrame { layer.draw(this) }
+            ctx.present()
         }
     }
 

@@ -3,7 +3,7 @@ package org.jetbrains.skiko.context
 import java.awt.Graphics
 
 /**
- * The AWT destination a [SoftwareContextHandler] blits its CPU-rendered frame onto.
+ * The AWT destination a software render context blits its CPU-rendered frame onto.
  *
  * This captures exactly the presentation-side state the software path used to read off `SkiaLayer`
  * (`backedLayer.getGraphics()`, `width`/`height`, `fullscreen`, `transparency`). Extracting it behind

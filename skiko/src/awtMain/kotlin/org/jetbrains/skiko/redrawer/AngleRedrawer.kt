@@ -1,10 +1,15 @@
 package org.jetbrains.skiko.redrawer
 
-import org.jetbrains.skia.BackendRenderTarget
-import org.jetbrains.skia.DirectContext
 import org.jetbrains.skiko.*
-import org.jetbrains.skiko.context.AngleContextHandler
+import org.jetbrains.skiko.context.rasterizeFrame
 
+/**
+ * The AWT on-screen ANGLE driver: a thin frame loop over an [AngleRenderContext] (which owns the device,
+ * GL context, surface and swap). Content is provided by [SkiaPanel.draw].
+ *
+ * Transitional: the loop lives here; deleted once `SkiaPanel` drives the context via the render-context
+ * factory + `RenderExecutor`.
+ */
 internal class AngleRedrawer(
     private val layer: SkiaPanel,
     analytics: SkiaLayerAnalytics,
@@ -18,21 +23,18 @@ internal class AngleRedrawer(
         }
     }
 
-    private val contextHandler = AngleContextHandler(this, properties.gpuResourceCacheLimit, layer.pixelGeometry, layer::draw)
-    override val renderInfo: String get() = contextHandler.rendererInfo()
+    private val ctx = AngleRenderContext(layer, properties)
+    private val drawLock = Any()
+
+    init {
+        onDeviceChosen(ctx.adapterName)
+        onContextInit()
+    }
+
+    override val renderInfo: String get() = ctx.rendererInfo()
 
     @OptIn(ExperimentalSkikoApi::class)
-    override val renderContext: RenderContext get() = contextHandler
-
-    private var drawLock = Any()
-
-    private var device: Long = 0L
-        get() {
-            if (field == 0L) {
-                throw RenderException("ANGLE device is not initialized or already disposed")
-            }
-            return field
-        }
+    override val renderContext: RenderContext get() = ctx
 
     private val frameExecutor = RenderExecutor {
         if (layer.isShowing) {
@@ -41,28 +43,9 @@ internal class AngleRedrawer(
         }
     }
 
-    private val adapterName get() = AngleApi.glGetString(AngleApi.GL_RENDERER)
-
-    init {
-        device = layer.requireBackedLayer.useDrawingSurfacePlatformInfo { platformInfo ->
-            createAngleDevice(platformInfo, layer.transparency).takeIf { it != 0L }
-                ?: throw RenderException("Failed to create ANGLE device.")
-        }
-        adapterName.let { adapterName ->
-            if (adapterName != null && !isVideoCardSupported(GraphicsApi.ANGLE, hostOs, adapterName)) {
-                throw RenderException("Cannot create ANGLE redrawer.")
-            }
-            onDeviceChosen(adapterName)
-        }
-        onContextInit()
-    }
-
     override fun dispose() = synchronized(drawLock) {
         frameExecutor.close()
-        makeCurrent(device)
-        contextHandler.dispose()
-        disposeDevice(device)
-        device = 0L
+        ctx.close()
         super.dispose()
     }
 
@@ -87,31 +70,12 @@ internal class AngleRedrawer(
         }
     }
 
-    private fun drawAndSwap(withVsync: Boolean) = synchronized(drawLock) {
-        if (isDisposed) {
-            return
+    private fun LayerDrawScope.drawAndSwap(withVsync: Boolean) = synchronized(drawLock) {
+        if (!isDisposed && scaledLayerWidth > 0 && scaledLayerHeight > 0) {
+            val surface = ctx.acquireSurface(scaledLayerWidth, scaledLayerHeight)
+            surface.canvas.rasterizeFrame { layer.draw(this) }
+            ctx.present()
+            ctx.swap(withVsync)
         }
-        makeCurrent(device)
-        layer.inDrawScope {
-            contextHandler.draw()
-        }
-        swapBuffers(device, withVsync)
     }
-
-    fun makeContext() = DirectContext(
-        makeAngleContext(device).takeIf { it != 0L }
-            ?: throw RenderException("Failed to make GL context.")
-    )
-
-    fun makeRenderTarget(width: Int, height: Int) = BackendRenderTarget(
-        makeAngleRenderTarget(device, width, height).takeIf { it != 0L }
-            ?: throw RenderException("Failed to make ANGLE render target.")
-    )
 }
-
-private external fun createAngleDevice(platformInfo: Long, transparency: Boolean): Long
-private external fun makeCurrent(device: Long)
-private external fun makeAngleContext(device: Long): Long
-private external fun makeAngleRenderTarget(device: Long, width: Int, height: Int): Long
-private external fun swapBuffers(device: Long, waitForVsync: Boolean)
-private external fun disposeDevice(device: Long)

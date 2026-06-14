@@ -2,8 +2,17 @@ package org.jetbrains.skiko.redrawer
 
 import kotlinx.coroutines.*
 import org.jetbrains.skiko.*
-import org.jetbrains.skiko.context.OpenGLContextHandler
+import org.jetbrains.skiko.context.rasterizeFrame
 
+/**
+ * The AWT on-screen Linux OpenGL driver: a frame loop over a [LinuxOpenGLRenderContext] (which owns the GLX
+ * context, make-current and swap). Content is provided by [SkiaPanel.draw]. Every GLX call runs inside
+ * `lockLinuxDrawingSurface`.
+ *
+ * Transitional: the multi-window batching loop lives here (a single static [FrameDispatcher] that coalesces
+ * one vsync across all on-screen GL windows); deleted once `SkiaPanel` drives the context via the
+ * render-context factory + `RenderExecutor` (per-window pacing).
+ */
 internal class LinuxOpenGLRedrawer(
     private val layer: SkiaPanel,
     analytics: SkiaLayerAnalytics,
@@ -13,34 +22,19 @@ internal class LinuxOpenGLRedrawer(
         loadOpenGLLibrary()
     }
 
-    private val contextHandler = OpenGLContextHandler(properties.gpuResourceCacheLimit, layer.pixelGeometry, layer::draw)
-    override val renderInfo: String get() = contextHandler.rendererInfo()
+    @OptIn(ExperimentalSkikoApi::class)
+    private val ctx = LinuxOpenGLRenderContext(layer, properties)
 
     @OptIn(ExperimentalSkikoApi::class)
-    override val renderContext: RenderContext get() = contextHandler
+    override val renderInfo: String get() = ctx.rendererInfo()
 
-    private var context = 0L
-    private val swapInterval = if (properties.isVsyncEnabled) 1 else 0
+    @OptIn(ExperimentalSkikoApi::class)
+    override val renderContext: RenderContext get() = ctx
 
     init {
-    	layer.requireBackedLayer.lockLinuxDrawingSurface {
-            context = it.createContext(layer.transparency)
-            if (context == 0L) {
-                throw RenderException("Cannot create Linux GL context")
-            }
-            it.makeCurrent(context)
-            adapterName.also { adapterName ->
-                if (adapterName != null && !isVideoCardSupported(GraphicsApi.OPENGL, hostOs, adapterName)) {
-                    throw RenderException("Cannot create Linux GL context")
-                }
-            }
-            onDeviceChosen(adapterName)
-            it.setSwapInterval(swapInterval)
-        }
+        onDeviceChosen(ctx.adapterName)
         onContextInit()
     }
-
-    private val adapterName get() = OpenGLApi.instance.glGetString(OpenGLApi.instance.GL_RENDERER)
 
     private val frameJob = Job()
     @Volatile
@@ -62,15 +56,16 @@ internal class LinuxOpenGLRedrawer(
         }
     }
 
+    @OptIn(ExperimentalSkikoApi::class)
     override fun dispose() {
         checkDisposed()
         frameJob.cancel()
         layer.requireBackedLayer.lockLinuxDrawingSurface {
             // makeCurrent is mandatory to destroy context, otherwise, OpenGL will destroy wrong context (from another window).
             // see the official example: https://www.khronos.org/opengl/wiki/Tutorial:_OpenGL_3.0_Context_Creation_(GLX)
-            it.makeCurrent(context)
-            contextHandler.dispose()
-            it.destroyContext(context)
+            ctx.makeCurrent(it.display, it.window)
+            ctx.close()
+            ctx.destroy(it.display)
         }
         super.dispose()
     }
@@ -81,26 +76,36 @@ internal class LinuxOpenGLRedrawer(
         frameDispatcher.scheduleFrame()
     }
 
+    @OptIn(ExperimentalSkikoApi::class)
     override fun renderImmediately() = layer.requireBackedLayer.lockLinuxDrawingSurface {
         checkDisposed()
         update()
         inDrawScope {
-            it.makeCurrent(context)
-            contextHandler.draw()
+            ctx.makeCurrent(it.display, it.window)
+            performDraw()
             val turnOfVsync = properties.isVsyncEnabled && !SkikoProperties.linuxWaitForVsyncOnRedrawImmediately
             if (turnOfVsync) {
-                it.setSwapInterval(0)
+                ctx.swapInterval(it.display, it.window, 0)
             }
-            it.swapBuffers()
+            ctx.swap(it.display, it.window)
             OpenGLApi.instance.glFlush()
             if (turnOfVsync) {
-                it.setSwapInterval(swapInterval)
+                ctx.swapInterval(it.display, it.window, if (properties.isVsyncEnabled) 1 else 0)
             }
         }
     }
 
     private fun draw() {
-        inDrawScope { contextHandler.draw() }
+        inDrawScope { performDraw() }
+    }
+
+    @OptIn(ExperimentalSkikoApi::class)
+    private fun LayerDrawScope.performDraw() {
+        if (scaledLayerWidth > 0 && scaledLayerHeight > 0) {
+            val surface = ctx.acquireSurface(scaledLayerWidth, scaledLayerHeight)
+            surface.canvas.rasterizeFrame { layer.draw(this) }
+            ctx.present()
+        }
     }
 
     companion object {
@@ -114,6 +119,7 @@ internal class LinuxOpenGLRedrawer(
         // Deliberately a single static FrameDispatcher (not a per-instance RenderExecutor): it batches all
         // on-screen GL windows into one frame and coalesces a single vsync across monitors. A per-instance
         // executor would regress this — 5 windows would each wait for vsync separately.
+        @OptIn(ExperimentalSkikoApi::class)
         private val frameDispatcher = FrameDispatcher(MainUIDispatcher) {
             toRedrawCopy.addAll(toRedraw)
             toRedraw.clear()
@@ -133,7 +139,8 @@ internal class LinuxOpenGLRedrawer(
             val drawingSurfaces = toRedrawVisible.associateWith { lockLinuxDrawingSurface(it.layer.requireBackedLayer) }
             try {
                 for (redrawer in toRedrawVisible) {
-                    drawingSurfaces[redrawer]!!.makeCurrent(redrawer.context)
+                    val ds = drawingSurfaces[redrawer]!!
+                    redrawer.ctx.makeCurrent(ds.display, ds.window)
                     redrawer.draw()
                 }
 
@@ -149,16 +156,18 @@ internal class LinuxOpenGLRedrawer(
                     .maxByOrNull { it.frameLimit }
 
                 for (redrawer in toRedrawVisible.filter { it != vsyncRedrawer }) {
-                    drawingSurfaces[redrawer]!!.makeCurrent(redrawer.context)
-                    drawingSurfaces[redrawer]!!.setSwapInterval(0)
-                    drawingSurfaces[redrawer]!!.swapBuffers()
+                    val ds = drawingSurfaces[redrawer]!!
+                    redrawer.ctx.makeCurrent(ds.display, ds.window)
+                    redrawer.ctx.swapInterval(ds.display, ds.window, 0)
+                    redrawer.ctx.swap(ds.display, ds.window)
                     OpenGLApi.instance.glFlush()
                 }
 
                 if (vsyncRedrawer != null) {
-                    drawingSurfaces[vsyncRedrawer]!!.makeCurrent(vsyncRedrawer.context)
-                    drawingSurfaces[vsyncRedrawer]!!.setSwapInterval(1)
-                    drawingSurfaces[vsyncRedrawer]!!.swapBuffers()
+                    val ds = drawingSurfaces[vsyncRedrawer]!!
+                    vsyncRedrawer.ctx.makeCurrent(ds.display, ds.window)
+                    vsyncRedrawer.ctx.swapInterval(ds.display, ds.window, 1)
+                    vsyncRedrawer.ctx.swap(ds.display, ds.window)
                     OpenGLApi.instance.glFlush()
                 }
             } finally {
@@ -170,15 +179,3 @@ internal class LinuxOpenGLRedrawer(
         }
     }
 }
-
-private fun LinuxDrawingSurface.createContext(transparency: Boolean) = createContext(display, transparency)
-private fun LinuxDrawingSurface.destroyContext(context: Long) = destroyContext(display, context)
-private fun LinuxDrawingSurface.makeCurrent(context: Long) = makeCurrent(display, window, context)
-private fun LinuxDrawingSurface.swapBuffers() = swapBuffers(display, window)
-private fun LinuxDrawingSurface.setSwapInterval(interval: Int) = setSwapInterval(display, window, interval)
-
-private external fun makeCurrent(display: Long, window: Long, context: Long)
-private external fun createContext(display: Long, transparency: Boolean): Long
-private external fun destroyContext(display: Long, context: Long)
-private external fun setSwapInterval(display: Long, window: Long, interval: Int)
-private external fun swapBuffers(display: Long, window: Long)

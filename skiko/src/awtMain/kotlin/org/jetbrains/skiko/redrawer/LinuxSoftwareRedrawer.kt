@@ -8,21 +8,16 @@ internal class LinuxSoftwareRedrawer(
     properties: SkiaLayerProperties
 ) : AbstractDirectSoftwareRedrawer(layer, analytics, properties) {
 
+    @OptIn(ExperimentalSkikoApi::class)
+    override val ctx = LinuxDirectSoftwareRenderContext(layer)
+
     init {
         onDeviceChosen("Software")
-        val scale = layer.contentScale
-        val w = (layer.width * scale).toInt().coerceAtLeast(0)
-        val h = (layer.height * scale).toInt().coerceAtLeast(0)
-        layer.requireBackedLayer.lockLinuxDrawingSurface {
-            device = createDevice(it.display, it.window, w, h).also {
-                if (it == 0L) {
-                    throw RenderException("Failed to create Software device")
-                }
-            }
-        }
         onContextInit()
     }
 
+    // On Linux every native device call must run inside lockLinuxDrawingSurface; wrap the whole frame/lifecycle
+    // op so the context's resize/acquire/present/dispose calls are all covered.
     override fun dispose() = layer.requireBackedLayer.lockLinuxDrawingSurface {
         super.dispose()
     }
@@ -34,14 +29,4 @@ internal class LinuxSoftwareRedrawer(
     override fun renderImmediately() = layer.requireBackedLayer.lockLinuxDrawingSurface {
         super.renderImmediately()
     }
-
-    override fun resize(width: Int, height: Int) = layer.requireBackedLayer.lockLinuxDrawingSurface {
-        super.resize(width, height)
-    }
-
-    override fun finishFrame(surface: Long) = layer.requireBackedLayer.lockLinuxDrawingSurface {
-        super.finishFrame(surface)
-    }
-
-    private external fun createDevice(display: Long, window: Long, width: Int, height: Int): Long
 }

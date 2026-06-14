@@ -2,8 +2,16 @@ package org.jetbrains.skiko.redrawer
 
 import kotlinx.coroutines.*
 import org.jetbrains.skiko.*
-import org.jetbrains.skiko.context.OpenGLContextHandler
+import org.jetbrains.skiko.context.rasterizeFrame
 
+/**
+ * The AWT on-screen Windows OpenGL driver: a frame loop over a [WindowsOpenGLRenderContext] (which owns the
+ * WGL device + context, make-current and swap). Content is provided by [SkiaPanel.draw].
+ *
+ * Transitional: the multi-window batching loop lives here (a single static [FrameDispatcher] that coalesces
+ * one dwmFlush vsync wait across all on-screen GL windows); deleted once `SkiaPanel` drives the context via
+ * the render-context factory + `RenderExecutor` (per-window pacing).
+ */
 internal class WindowsOpenGLRedrawer(
     private val layer: SkiaPanel,
     analytics: SkiaLayerAnalytics,
@@ -13,48 +21,23 @@ internal class WindowsOpenGLRedrawer(
         loadOpenGLLibrary()
     }
 
-    private val contextHandler = OpenGLContextHandler(properties.gpuResourceCacheLimit, layer.pixelGeometry, layer::draw)
-    override val renderInfo: String get() = contextHandler.rendererInfo()
+    @OptIn(ExperimentalSkikoApi::class)
+    private val ctx = WindowsOpenGLRenderContext(layer, properties)
 
     @OptIn(ExperimentalSkikoApi::class)
-    override val renderContext: RenderContext get() = contextHandler
+    override val renderInfo: String get() = ctx.rendererInfo()
 
-    private val device: Long = layer.requireBackedLayer.useDrawingSurfacePlatformInfo {
-        getDevice(it).also { devicePtr ->
-            check(devicePtr != 0L) { "Can't get device" }
-        }
-    }
-
-    private val context = createContext(device, layer.contentHandle, layer.transparency).also {
-        if (it == 0L) {
-            throw RenderException("Cannot create Windows GL context")
-        }
-        makeCurrent(device, it)
-        adapterName.also { adapterName ->
-            if (adapterName != null && !isVideoCardSupported(GraphicsApi.OPENGL, hostOs, adapterName)) {
-                throw RenderException("Cannot create Windows GL context")
-            }
-        }
-        onDeviceChosen(adapterName)
-    }
-
-    private val adapterName get() = OpenGLApi.instance.glGetString(OpenGLApi.instance.GL_RENDERER)
+    @OptIn(ExperimentalSkikoApi::class)
+    override val renderContext: RenderContext get() = ctx
 
     init {
-        makeCurrent()
-        // For vsync we will use dwmFlush instead of swapInterval,
-        // because it isn't reliable with DWM (Desktop Windows Manager): interval between frames isn't stable (14-19ms).
-        // With dwmFlush it is stable (16.6-16.8 ms)
-        // GLFW also uses dwmFlush (https://www.glfw.org/docs/3.0/window.html#window_swap)
-        setSwapInterval(0)
+        onDeviceChosen(ctx.adapterName)
         onContextInit()
     }
 
     override fun dispose() {
         check(!isDisposed) { "WindowsOpenGLRedrawer is disposed" }
-        makeCurrent()
-        contextHandler.dispose()
-        deleteContext(context)
+        ctx.close()
         super.dispose()
     }
 
@@ -64,28 +47,35 @@ internal class WindowsOpenGLRedrawer(
         frameDispatcher.scheduleFrame()
     }
 
+    @OptIn(ExperimentalSkikoApi::class)
     override fun renderImmediately() {
         check(!isDisposed) { "WindowsOpenGLRedrawer is disposed" }
         update()
         inDrawScope {
             if (!isDisposed) { // Redrawer may be disposed in user code, during `update`
-                makeCurrent()
-                contextHandler.draw()
-                swapBuffers()
+                ctx.makeCurrent()
+                performDraw()
+                ctx.swap()
                 OpenGLApi.instance.glFinish()
                 if (SkikoProperties.windowsWaitForVsyncOnRedrawImmediately) {
-                    dwmFlush()
+                    ctx.dwmFlush()
                 }
             }
         }
     }
 
     private fun draw() {
-        inDrawScope { contextHandler.draw() }
+        inDrawScope { performDraw() }
     }
 
-    private fun makeCurrent() = makeCurrent(device, context)
-    private fun swapBuffers() = swapBuffers(device)
+    @OptIn(ExperimentalSkikoApi::class)
+    private fun LayerDrawScope.performDraw() {
+        if (scaledLayerWidth > 0 && scaledLayerHeight > 0) {
+            val surface = ctx.acquireSurface(scaledLayerWidth, scaledLayerHeight)
+            surface.canvas.rasterizeFrame { layer.draw(this) }
+            ctx.present()
+        }
+    }
 
     companion object {
         private val toRedraw = mutableSetOf<WindowsOpenGLRedrawer>()
@@ -98,6 +88,7 @@ internal class WindowsOpenGLRedrawer(
         // Deliberately a single static FrameDispatcher (not a per-instance RenderExecutor): it batches all
         // on-screen GL windows into one frame and coalesces one dwmFlush vsync wait across them. A
         // per-instance executor would regress this — each window would wait for vsync separately.
+        @OptIn(ExperimentalSkikoApi::class)
         private val frameDispatcher = FrameDispatcher(MainUIDispatcher) {
             toRedrawCopy.addAll(toRedraw)
             toRedraw.clear()
@@ -112,23 +103,23 @@ internal class WindowsOpenGLRedrawer(
             }
 
             for (redrawer in toRedrawVisible) {
-                redrawer.makeCurrent()
+                redrawer.ctx.makeCurrent()
                 redrawer.draw()
             }
 
             for (redrawer in toRedrawVisible) {
-                redrawer.swapBuffers()
+                redrawer.ctx.swap()
             }
 
             for (redrawer in toRedrawVisible) {
-                redrawer.makeCurrent()
+                redrawer.ctx.makeCurrent()
                 OpenGLApi.instance.glFinish()
             }
 
             val isVsyncEnabled = toRedrawVisible.all { it.properties.isVsyncEnabled }
             if (isVsyncEnabled) {
                 withContext(dispatcherToBlockOn) {
-                    dwmFlush() // wait for vsync
+                    toRedrawVisible.firstOrNull()?.ctx?.dwmFlush() // wait for vsync
                 }
             }
 
@@ -137,16 +128,3 @@ internal class WindowsOpenGLRedrawer(
         }
     }
 }
-
-private external fun makeCurrent(device: Long, context: Long)
-private external fun getDevice(platformInfo: Long): Long
-private external fun createContext(device: Long, contentHandle:Long, transparency: Boolean): Long
-private external fun deleteContext(context: Long)
-private external fun setSwapInterval(interval: Int)
-private external fun swapBuffers(device: Long)
-
-// TODO according to https://bugs.chromium.org/p/chromium/issues/detail?id=467617 dwmFlush has lag 3 ms after vsync.
-//  Maybe we should use D3DKMTWaitForVerticalBlankEvent? See also https://www.vsynctester.com/chromeisbroken.html
-// TODO should we support Windows 7? DWM can be disabled on Windows 7.
-//  it that case there will be a crash or just no frame limit (I don't know exactly).
-private external fun dwmFlush()

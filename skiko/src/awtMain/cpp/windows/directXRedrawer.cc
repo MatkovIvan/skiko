@@ -273,7 +273,7 @@ extern "C"
         return env->CallBooleanMethod(redrawer, method, jname);
     }
 
-    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_chooseAdapter(
+    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRenderContext_chooseAdapter(
             JNIEnv *env, jobject redrawer, jint adapterPriority) {
         gr_cp<IDXGIFactory4> deviceFactory;
         if (!SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&deviceFactory)))) {
@@ -303,7 +303,7 @@ extern "C"
         return 0;
     }
 
-    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_createDirectXDevice(
+    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRenderContext_createDirectXDevice(
         JNIEnv *env, jobject redrawer, jlong adapterPtr, jlong contentHandle, jboolean transparency) {
         gr_cp<IDXGIFactory4> deviceFactory;
         if (!SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&deviceFactory)))) {
@@ -362,7 +362,7 @@ extern "C"
         return toJavaPointer(d3dDevice);
     }
 
-    JNIEXPORT void JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_initSwapChain(
+    JNIEXPORT void JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRenderContext_initSwapChain(
         JNIEnv *env, jobject redrawer, jlong devicePtr, jint width, jint height, jboolean transparency)
     {
         __try
@@ -376,7 +376,7 @@ extern "C"
         }
     }
 
-    JNIEXPORT void JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_initFence(
+    JNIEXPORT void JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRenderContext_initFence(
         JNIEnv *env, jobject redrawer, jlong devicePtr)
     {
         __try
@@ -396,7 +396,7 @@ extern "C"
         }
     }
 
-    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_makeDirectXContext(
+    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRenderContext_makeDirectXContext(
         JNIEnv *env, jobject redrawer, jlong devicePtr)
     {
         DirectXDevice *d3dDevice = fromJavaPointer<DirectXDevice *>(devicePtr);
@@ -404,28 +404,28 @@ extern "C"
         return toJavaPointer(GrDirectContexts::MakeD3D(backendContext).release());
     }
 
-    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_getDirectXAdapterPointer(
+    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRenderContext_getDirectXAdapterPointer(
         JNIEnv *env, jobject redrawer, jlong devicePtr)
     {
         DirectXDevice *d3dDevice = fromJavaPointer<DirectXDevice *>(devicePtr);
         return toJavaPointer(d3dDevice->backendContext.fAdapter.get());
     }
 
-    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_getDirectXDevicePointer(
+    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRenderContext_getDirectXDevicePointer(
         JNIEnv *env, jobject redrawer, jlong devicePtr)
     {
         DirectXDevice *d3dDevice = fromJavaPointer<DirectXDevice *>(devicePtr);
         return toJavaPointer(d3dDevice->backendContext.fDevice.get());
     }
 
-    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_getDirectXQueuePointer(
+    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRenderContext_getDirectXQueuePointer(
         JNIEnv *env, jobject redrawer, jlong devicePtr)
     {
         DirectXDevice *d3dDevice = fromJavaPointer<DirectXDevice *>(devicePtr);
         return toJavaPointer(d3dDevice->backendContext.fQueue.get());
     }
 
-    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_makeDirectXSurface(
+    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRenderContext_makeDirectXSurface(
         JNIEnv *env, jobject redrawer, jlong devicePtr, jlong contextPtr, jint width, jint height, jintArray surfacePropsInts, jint index)
     {
         DirectXDevice *d3dDevice = fromJavaPointer<DirectXDevice *>(devicePtr);
@@ -453,7 +453,7 @@ extern "C"
         return toJavaPointer(result);
     }
 
-    JNIEXPORT void JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_resizeBuffers(
+    JNIEXPORT void JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRenderContext_resizeBuffers(
         JNIEnv *env, jobject redrawer, jlong devicePtr, jint width, jint height)
     {
         __try {
@@ -475,7 +475,7 @@ extern "C"
         }
     }
 
-    JNIEXPORT void JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_swap(
+    JNIEXPORT void JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRenderContext_swap(
         JNIEnv *env, jobject redrawer, jlong devicePtr, jboolean isVsyncEnabled)
     {
         __try
@@ -492,14 +492,14 @@ extern "C"
         }
     }
 
-    JNIEXPORT void JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_disposeDevice(
+    JNIEXPORT void JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRenderContext_disposeDevice(
         JNIEnv *env, jobject redrawer, jlong devicePtr)
     {
         DirectXDevice *d3dDevice = fromJavaPointer<DirectXDevice *>(devicePtr);
         delete d3dDevice;
     }
 
-    JNIEXPORT jint JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_getBufferIndex(
+    JNIEXPORT jint JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRenderContext_getBufferIndex(
         JNIEnv *env, jobject redrawer, jlong devicePtr)
     {
         __try {
@@ -520,7 +520,7 @@ extern "C"
         }
     }
 
-    JNIEXPORT jstring JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_getAdapterName(JNIEnv *env, jobject redrawer, jlong adapterPtr)
+    JNIEXPORT jstring JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRenderContext_getAdapterName(JNIEnv *env, jobject redrawer, jlong adapterPtr)
     {
         IDXGIAdapter1 *adapter = fromJavaPointer<IDXGIAdapter1 *>(adapterPtr);
 
@@ -531,7 +531,7 @@ extern "C"
         return env->NewStringUTF(currentAdapterName.c_str());
     }
 
-    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRedrawer_getAdapterMemorySize(JNIEnv *env, jobject redrawer, jlong adapterPtr)
+    JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_Direct3DRenderContext_getAdapterMemorySize(JNIEnv *env, jobject redrawer, jlong adapterPtr)
     {
         IDXGIAdapter1 *adapter = fromJavaPointer<IDXGIAdapter1 *>(adapterPtr);
 

@@ -16,7 +16,7 @@
 
 extern "C"
 {
-JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_context_MetalContextHandler_makeMetalContext(
+JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_MetalRenderContext_makeMetalContext(
     JNIEnv* env, jobject contextHandler, jlong devicePtr)
 {
     @autoreleasepool {
@@ -28,7 +28,7 @@ JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_context_MetalContextHandler_mak
     }
 }
 
-JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_context_MetalContextHandler_makeMetalRenderTarget(
+JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_MetalRenderContext_makeMetalRenderTarget(
     JNIEnv* env, jobject contextHandler, jlong devicePtr, jint width, jint height)
 {
     @autoreleasepool {
@@ -54,21 +54,21 @@ JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_context_MetalContextHandler_mak
     }
 }
 
-JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_context_MetalContextHandler_getMetalDevicePointer(
+JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_MetalRenderContext_getMetalDevicePointer(
     JNIEnv* env, jobject contextHandler, jlong devicePtr)
 {
     MetalDevice *device = (__bridge MetalDevice *) (void*) devicePtr;
     return (jlong) (__bridge void *) device.adapter;
 }
 
-JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_context_MetalContextHandler_getMetalCommandQueuePointer(
+JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_MetalRenderContext_getMetalCommandQueuePointer(
     JNIEnv* env, jobject contextHandler, jlong devicePtr)
 {
     MetalDevice *device = (__bridge MetalDevice *) (void*) devicePtr;
     return (jlong) (__bridge void *) device.queue;
 }
 
-JNIEXPORT void JNICALL Java_org_jetbrains_skiko_context_MetalContextHandler_finishFrame(
+JNIEXPORT void JNICALL Java_org_jetbrains_skiko_redrawer_MetalRenderContext_finishFrame(
     JNIEnv *env, jobject contextHandler, jlong devicePtr)
 {
     @autoreleasepool {

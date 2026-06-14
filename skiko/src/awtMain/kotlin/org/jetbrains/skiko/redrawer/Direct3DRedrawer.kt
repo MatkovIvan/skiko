@@ -1,51 +1,34 @@
 package org.jetbrains.skiko.redrawer
 
 import kotlinx.coroutines.withContext
-import org.jetbrains.skia.DirectContext
-import org.jetbrains.skia.Surface
-import org.jetbrains.skia.SurfaceProps
-import org.jetbrains.skia.impl.InteropPointer
-import org.jetbrains.skia.impl.interopScope
 import org.jetbrains.skiko.*
-import org.jetbrains.skiko.context.Direct3DContextHandler
+import org.jetbrains.skiko.context.rasterizeFrame
 
+/**
+ * The AWT on-screen Direct3D 12 driver: a thin off-EDT frame loop over a [Direct3DRenderContext] (which owns
+ * the device, swap chain, surfaces and present). Content is provided by [SkiaPanel.draw].
+ *
+ * Transitional: the loop lives here; deleted once `SkiaPanel` drives the context via the render-context
+ * factory + `RenderExecutor`.
+ */
 internal class Direct3DRedrawer(
     private val layer: SkiaPanel,
     analytics: SkiaLayerAnalytics,
     private val properties: SkiaLayerProperties
 ) : AWTRedrawer(layer, analytics, GraphicsApi.DIRECT3D) {
 
-    private val contextHandler = Direct3DContextHandler(this, properties.gpuResourceCacheLimit, layer.pixelGeometry, layer::draw)
-    override val renderInfo: String get() = contextHandler.rendererInfo()
-
-    @OptIn(ExperimentalSkikoApi::class)
-    override val renderContext: RenderContext get() = contextHandler
-
-    private var drawLock = Any()
-    private var isSwapChainInitialized = false
-
-    private var device: Long = 0L
-        get() {
-            if (field == 0L) {
-                throw RenderException("DirectX12 device is not initialized or already disposed")
-            }
-            return field
-        }
-
-    val adapterName: String
-    val adapterMemorySize: Long
+    private val ctx = Direct3DRenderContext(layer, properties)
+    private val drawLock = Any()
 
     init {
-        val adapter = chooseAdapter(properties.adapterPriority.ordinal)
-        if (adapter == 0L) {
-            throw RenderException("Failed to choose DirectX12 adapter.")
-        }
-        adapterName = getAdapterName(adapter)
-        adapterMemorySize = getAdapterMemorySize(adapter)
-        onDeviceChosen(adapterName)
-        device = createDirectXDevice(adapter, layer.contentHandle, layer.transparency)
-            .takeIf { it != 0L } ?: throw RenderException("Failed to create DirectX12 device.")
+        onDeviceChosen(ctx.adapterName)
+        onContextInit()
     }
+
+    override val renderInfo: String get() = ctx.rendererInfo()
+
+    @OptIn(ExperimentalSkikoApi::class)
+    override val renderContext: RenderContext get() = ctx
 
     private val frameExecutor = RenderExecutor {
         if (layer.isShowing) {
@@ -54,15 +37,9 @@ internal class Direct3DRedrawer(
         }
     }
 
-    init {
-        onContextInit()
-    }
-
     override fun dispose() = synchronized(drawLock) {
         frameExecutor.close()
-        contextHandler.dispose()
-        disposeDevice(device)
-        device = 0L
+        ctx.close()
         super.dispose()
     }
 
@@ -90,64 +67,12 @@ internal class Direct3DRedrawer(
     }
 
     private fun LayerDrawScope.drawAndSwap(withVsync: Boolean) = synchronized(drawLock) {
-        if (isDisposed) {
-            return
-        }
-        contextHandler.draw()
-        swap(withVsync)
-    }
-
-    fun makeContext() = DirectContext(
-        makeDirectXContext(device)
-    )
-
-    fun makeSurface(context: Long, width: Int, height: Int, surfaceProps: SurfaceProps, index: Int): Surface {
-        return interopScope {
-            Surface(makeDirectXSurface(device, context, width, height, toInterop(surfaceProps.packToIntArray()), index))
+        if (!isDisposed) {
+            // No size guard: D3D coerces to 1×1 in acquireSurface and runs the whole pipeline.
+            val surface = ctx.acquireSurface(scaledLayerWidth, scaledLayerHeight)
+            surface.canvas.rasterizeFrame { layer.draw(this) }
+            ctx.present()
+            ctx.swap(withVsync)
         }
     }
-
-    fun changeSize(width: Int, height: Int): Boolean {
-        return if (!isSwapChainInitialized) {
-            initSwapChain(device, width, height, layer.transparency)
-            isSwapChainInitialized = true
-            true
-        } else {
-            resizeBuffers(device, width, height)
-            false
-        }
-    }
-
-    private fun swap(withVsync: Boolean) {
-        if (!isSwapChainInitialized) {
-            return
-        }
-        swap(device, withVsync)
-    }
-
-    fun getBufferIndex() = getBufferIndex(device)
-    fun initFence() = initFence(device)
-
-    // Called from native code
-    private fun isAdapterSupported(name: String) = isVideoCardSupported(GraphicsApi.DIRECT3D, hostOs, name)
-
-    internal fun adapterPointer(): Long = getDirectXAdapterPointer(device)
-    internal fun devicePointer(): Long = getDirectXDevicePointer(device)
-    internal fun queuePointer(): Long = getDirectXQueuePointer(device)
-
-    private external fun getDirectXAdapterPointer(device: Long): Long
-    private external fun getDirectXDevicePointer(device: Long): Long
-    private external fun getDirectXQueuePointer(device: Long): Long
-    private external fun chooseAdapter(adapterPriority: Int): Long
-    private external fun createDirectXDevice(adapter: Long, contentHandle: Long, transparency: Boolean): Long
-    private external fun makeDirectXContext(device: Long): Long
-    private external fun makeDirectXSurface(device: Long, context: Long, width: Int, height: Int, surfacePropsIntArray: InteropPointer, index: Int): Long
-    private external fun resizeBuffers(device: Long, width: Int, height: Int)
-    private external fun swap(device: Long, isVsyncEnabled: Boolean)
-    private external fun disposeDevice(device: Long)
-    private external fun getBufferIndex(device: Long): Int
-    private external fun initSwapChain(device: Long, width: Int, height: Int, transparency: Boolean)
-    private external fun initFence(device: Long)
-    private external fun getAdapterName(adapter: Long): String
-    private external fun getAdapterMemorySize(adapter: Long): Long
 }

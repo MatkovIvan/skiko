@@ -1,6 +1,6 @@
 package org.jetbrains.skiko
 
-import org.jetbrains.skiko.context.Direct3DContextHandler
+import org.jetbrains.skiko.redrawer.Direct3DRenderContext
 
 /**
  * The `IDXGIAdapter1` this [RenderContext] renders on as a native pointer, or `null` if it is not
@@ -8,7 +8,7 @@ import org.jetbrains.skiko.context.Direct3DContextHandler
  */
 @ExperimentalSkikoApi
 val RenderContext.direct3DAdapterPointer: Long?
-    get() = (this as? Direct3DContextHandler)?.direct3DAdapterPtr
+    get() = (this as? Direct3DRenderContext)?.direct3DAdapterPtr
 
 /**
  * The `ID3D12Device` this [RenderContext] renders on as a native pointer, or `null` if it is not
@@ -18,7 +18,7 @@ val RenderContext.direct3DAdapterPointer: Long?
  */
 @ExperimentalSkikoApi
 val RenderContext.direct3DDevicePointer: Long?
-    get() = (this as? Direct3DContextHandler)?.direct3DDevicePtr
+    get() = (this as? Direct3DRenderContext)?.direct3DDevicePtr
 
 /**
  * The `ID3D12CommandQueue` skiko submits its frames on as a native pointer, or `null` if this context is not
@@ -27,4 +27,4 @@ val RenderContext.direct3DDevicePointer: Long?
  */
 @ExperimentalSkikoApi
 val RenderContext.direct3DQueuePointer: Long?
-    get() = (this as? Direct3DContextHandler)?.direct3DQueuePtr
+    get() = (this as? Direct3DRenderContext)?.direct3DQueuePtr
