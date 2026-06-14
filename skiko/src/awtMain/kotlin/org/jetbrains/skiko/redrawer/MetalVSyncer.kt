@@ -16,7 +16,9 @@ internal class MetalVSyncer(windowPtr: Long) {
     // The underlying throttler that blocks a thread
     private val displayLinkThrottler = DisplayLinkThrottler(windowPtr)
 
-    private val channel = RendezvousBroadcastChannel<Unit>()
+    // Broadcasts the predicted present time (nanoseconds, System.nanoTime clock) of the vsync, or 0
+    // when it is unknown (no display link).
+    private val channel = RendezvousBroadcastChannel<Long>()
 
     // A channel to trigger the thread that waits on vsync to doing so
     private val triggerResumeOnVSync = Channel<Unit>(Channel.CONFLATED)
@@ -24,9 +26,9 @@ internal class MetalVSyncer(windowPtr: Long) {
     private val job = CoroutineScope(dispatcherToBlockOn).launch {
         while (isActive) {
             triggerResumeOnVSync.receive()  // Suspend until needed
-            displayLinkThrottler.waitVSync()  // This blocks (not suspends!) the thread
+            val outputTimeNanos = displayLinkThrottler.waitVSync()  // This blocks (not suspends!) the thread
             if (isActive) {
-                channel.sendAll(Unit)
+                channel.sendAll(outputTimeNanos)
             }
         }
     }.also {
@@ -36,11 +38,12 @@ internal class MetalVSyncer(windowPtr: Long) {
     }
 
     /**
-     * Suspends until the next vsync.
+     * Suspends until the next vsync and returns its predicted present time (nanoseconds, on the
+     * [System.nanoTime] clock), or 0 if that time is unknown.
      */
-    suspend fun waitForVSync() {
+    suspend fun waitForVSync(): Long {
         triggerResumeOnVSync.trySend(Unit)
-        channel.receive()
+        return channel.receive()
     }
 
     fun dispose() {
@@ -59,11 +62,11 @@ private class DisplayLinkThrottler(windowPtr: Long) {
      */
     private external fun create(windowPtr: Long): Long
 
-    fun waitVSync() = waitVSync(implPtr)
+    fun waitVSync(): Long = waitVSync(implPtr)
 
     private external fun dispose(implPtr: Long)
 
-    private external fun waitVSync(implPtr: Long)
+    private external fun waitVSync(implPtr: Long): Long
 
     companion object {
         init {

@@ -6,6 +6,19 @@
 #import <AppKit/AppKit.h>
 #import <stdatomic.h>
 #import <objc/runtime.h>
+#import <mach/mach_time.h>
+
+// Converts a CVTimeStamp hostTime (mach_absolute_time units) to nanoseconds on the same clock that
+// the JVM's System.nanoTime() reads on macOS, so the value is directly usable as a frame target time.
+static int64_t machHostTimeToNanos(uint64_t hostTime) {
+    static mach_timebase_info_data_t timebase = {0, 0};
+    if (timebase.denom == 0) {
+        mach_timebase_info(&timebase);
+    }
+    // numer/denom is 1/1 on x86_64 and a small ratio (e.g. 125/3) on Apple Silicon; for any realistic
+    // uptime hostTime * numer stays within int64.
+    return (int64_t)(hostTime * timebase.numer / timebase.denom);
+}
 
 typedef void (^OnScreenChangeCallback)(void);
 
@@ -36,13 +49,17 @@ static void *OnScreenChangeCallbackKey = &OnScreenChangeCallbackKey;
 @interface DisplayLinkThrottler : NSObject
 
 - (void)onVSync;
+- (void)onVSyncWithOutputTimeNanos:(int64_t)outputTimeNanos;
 
 @end
 
 static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeStamp *now, const CVTimeStamp *outputTime, CVOptionFlags flagsIn, CVOptionFlags *flagsOut, void *displayLinkContext) {
     DisplayLinkThrottler *throttler = (__bridge DisplayLinkThrottler *)displayLinkContext;
 
-    [throttler onVSync];
+    // outputTime is the predicted present time of the frame this vsync drives; surface it so the
+    // frame target time isn't discarded (skiko render-context plan, §5 / step K7).
+    int64_t outputTimeNanos = (outputTime != NULL) ? machHostTimeToNanos(outputTime->hostTime) : 0;
+    [throttler onVSyncWithOutputTimeNanos:outputTimeNanos];
 
     return kCVReturnSuccess;
 }
@@ -58,6 +75,10 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
     NSConditionLock *_vsyncConditionLock;
     BOOL _isSleeping;
     __weak NSWindow *_window;
+
+    // Predicted present time (nanoseconds, System.nanoTime clock) of the most recent vsync; published
+    // by the display-link callback and read by waitVSync after it unblocks.
+    _Atomic int64_t _outputTimeNanos;
 }
 
 - (instancetype)initWithWindow:(NSWindow *)window {
@@ -173,12 +194,20 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 }
 
 - (void)onVSync {
+    // No predicted present time available (e.g. wake from sleep) -> publish 0 ("unknown").
+    [self onVSyncWithOutputTimeNanos:0];
+}
+
+- (void)onVSyncWithOutputTimeNanos:(int64_t)outputTimeNanos {
+    atomic_store(&_outputTimeNanos, outputTimeNanos);
     // Lock condition lock and immediately unlock setting condition variable to 1 (can render now)
     [_vsyncConditionLock lock];
     [_vsyncConditionLock unlockWithCondition:1];
 }
 
-- (void)waitVSync {
+// Returns the predicted present time (nanoseconds, System.nanoTime clock) of the vsync that unblocked
+// this wait, or 0 if there is no display link / the time is unknown.
+- (int64_t)waitVSync {
     BOOL hasDisplayLink;
 
     [_lock lock];
@@ -187,12 +216,14 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
 
     // No display link to wait for
     if (!hasDisplayLink) {
-        return;
+        return 0;
     }
 
     // Wait until `onVSync` signals 1, then immediately lock, set it to 0 and unlock again.
     [_vsyncConditionLock lockWhenCondition:1];
     [_vsyncConditionLock unlockWithCondition:0];
+
+    return atomic_load(&_outputTimeNanos);
 }
 
 - (void)invalidateDisplayLink {
@@ -266,10 +297,10 @@ JNIEXPORT void JNICALL Java_org_jetbrains_skiko_redrawer_DisplayLinkThrottler_di
     // throttler will be released by ARC and deallocated in the end of this scope.
 }
 
-JNIEXPORT void JNICALL Java_org_jetbrains_skiko_redrawer_DisplayLinkThrottler_waitVSync(JNIEnv *env, jobject obj, jlong throttlerPtr) {
+JNIEXPORT jlong JNICALL Java_org_jetbrains_skiko_redrawer_DisplayLinkThrottler_waitVSync(JNIEnv *env, jobject obj, jlong throttlerPtr) {
     DisplayLinkThrottler *throttler = (__bridge DisplayLinkThrottler *) (void *) throttlerPtr;
 
-    [throttler waitVSync];
+    return (jlong) [throttler waitVSync];
 }
 
 }
