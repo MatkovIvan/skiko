@@ -1,14 +1,14 @@
-package org.jetbrains.skiko.redrawer
+package org.jetbrains.skiko.rendercontext
 
 import kotlinx.coroutines.*
 import org.jetbrains.skia.*
 import org.jetbrains.skiko.*
 
 /**
- * The single per-window Linux (GLX) OpenGL on-screen render context ([AWTRedrawer]): it owns the native
+ * The single per-window Linux (GLX) OpenGL on-screen render context ([AwtRenderContext]): it owns the native
  * GLX context lifecycle (created from the window's X11 display), the Skia [DirectContext] and on-screen GPU
  * surface for the current frame, and the present/swap. The frame loop itself lives in the generic
- * [OnScreenRedrawer].
+ * [OnScreenRenderer].
  *
  * Pacing is per window: every GLX call (create / make-current / swap / swap-interval / destroy) runs inside
  * [org.jetbrains.skiko.lockLinuxDrawingSurface], and [renderFrame] moves the *entire* per-frame body (lock,
@@ -17,18 +17,15 @@ import org.jetbrains.skiko.*
  * `glXSwapBuffers` itself. An additional software frame limiter runs in [paceBeforeFrame] (some Linuxes don't
  * honour vsync).
  *
- * This class name is part of its JNI symbols, including the file-level facade
- * `Java_org_jetbrains_skiko_redrawer_LinuxOpenGLRedrawerKt_*` generated for the top-level `external fun`s.
- * The Kotlin class name and the exported native symbols are one unit: renaming either alone unbinds
- * them, and the failure surfaces as an UnsatisfiedLinkError at the first native call, not as a
- * compile error.
+ * Its native methods are top-level `external fun`s, so their JNI symbols live on the file facade
+ * (`Java_org_jetbrains_skiko_rendercontext_LinuxOpenGLRenderContextKt_*`); the file name must match those symbols.
  *
  * Content to draw is provided by [AwtSurfaceHost.draw].
  */
-internal class LinuxOpenGLRedrawer(
+internal class LinuxOpenGLRenderContext(
     private val host: AwtSurfaceHost,
     private val properties: SkiaLayerProperties
-) : AWTRedrawer {
+) : AwtRenderContext {
     init {
         loadOpenGLLibrary()
     }
@@ -37,7 +34,7 @@ internal class LinuxOpenGLRedrawer(
      * Guards every native/JNI touch point: the GLX context lifetime, the Skia [DirectContext]/surface, and
      * presentation. [dispose] takes this lock before releasing any native resource, and the per-frame render
      * path ([drawAndSwap]) takes the *same* lock and re-checks [isDisposed] *inside* it before making any
-     * native call, mirroring [MetalRedrawer]'s and [Direct3DRedrawer]'s discipline. Frames render off the EDT
+     * native call, mirroring [MetalRenderContext]'s and [Direct3DRenderContext]'s discipline. Frames render off the EDT
      * (see [renderFrame], which hops onto [dispatcherToBlockOn]) while [dispose] can be invoked from the EDT
      * concurrently, so without this the two could interleave and [dispose] could free the GLX context out
      * from under an in-flight JNI call.
@@ -152,7 +149,7 @@ internal class LinuxOpenGLRedrawer(
     }
 
     override fun acquireSurface(width: Int, height: Int): Surface = synchronized(drawLock) {
-        check(!isDisposed) { "LinuxOpenGLRedrawer is disposed" }
+        check(!isDisposed) { "LinuxOpenGLRenderContext is disposed" }
         host.backedLayer.lockLinuxDrawingSurface { it.makeCurrent(context) }
         if (!ensureContext()) {
             throw RenderException("Cannot init graphic context")

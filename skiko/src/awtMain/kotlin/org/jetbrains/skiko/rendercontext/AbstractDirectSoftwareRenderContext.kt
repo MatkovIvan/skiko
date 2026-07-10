@@ -1,4 +1,4 @@
-package org.jetbrains.skiko.redrawer
+package org.jetbrains.skiko.rendercontext
 
 import org.jetbrains.skia.*
 import org.jetbrains.skia.impl.getPtr
@@ -8,10 +8,10 @@ import org.jetbrains.skiko.layerFrameLimiter
 import java.lang.ref.Reference
 
 /**
- * The direct-software (CPU, blit-straight-to-window) on-screen render context ([AWTRedrawer]) shared by
+ * The direct-software (CPU, blit-straight-to-window) on-screen render context ([AwtRenderContext]) shared by
  * Windows and Linux. It owns the native window-backed raster device (created by the platform subclass,
- * [WindowsSoftwareRedrawer] / [LinuxSoftwareRedrawer]) and the Skia raster [Surface] for the current frame.
- * The generic [OnScreenRedrawer] drives the frame loop. An optional software frame limiter runs in
+ * [WindowsSoftwareRenderContext] / [LinuxSoftwareRenderContext]) and the Skia raster [Surface] for the current frame.
+ * The generic [OnScreenRenderer] drives the frame loop. An optional software frame limiter runs in
  * [paceBeforeFrame].
  *
  * The platform subclass wraps the per-frame body and the native lifecycle calls in its drawing-surface lock
@@ -20,14 +20,14 @@ import java.lang.ref.Reference
  *
  * Content to draw is provided by [AwtSurfaceHost.draw].
  */
-internal abstract class AbstractDirectSoftwareRedrawer(
+internal abstract class AbstractDirectSoftwareRenderContext(
     private val host: AwtSurfaceHost,
     private val properties: SkiaLayerProperties
-) : AWTRedrawer {
+) : AwtRenderContext {
 
     /**
      * Guards the native device and the raster [surface]/[canvas], mirroring the `drawLock` discipline in
-     * [MetalRedrawer]/[SoftwareRedrawer]: [dispose] takes it before releasing any native resource, and the
+     * [MetalRenderContext]/[SoftwareRenderContext]: [dispose] takes it before releasing any native resource, and the
      * per-frame render path ([performDraw]) takes the same lock and re-checks [isDisposed] inside it before
      * touching them. On this backend the frame loop and [dispose] both always run on the EDT; the lock still
      * guards them so every backend enforces the same discipline, whether or not it renders off the EDT.
@@ -69,7 +69,7 @@ internal abstract class AbstractDirectSoftwareRedrawer(
     override suspend fun renderFrame(scope: LayerDrawScope, immediate: Boolean) = draw(scope)
 
     override fun acquireSurface(width: Int, height: Int): Surface = synchronized(drawLock) {
-        check(!isDisposed) { "DirectSoftwareRedrawer is disposed" }
+        check(!isDisposed) { "DirectSoftwareRenderContext is disposed" }
         if (!ensureContext()) {
             throw RenderException("Cannot init graphic context")
         }
@@ -84,7 +84,7 @@ internal abstract class AbstractDirectSoftwareRedrawer(
     }
 
     /**
-     * Renders one frame. Kept `open` so the platform subclass ([LinuxSoftwareRedrawer]) can wrap the whole
+     * Renders one frame. Kept `open` so the platform subclass ([LinuxSoftwareRenderContext]) can wrap the whole
      * body in its drawing-surface lock, mirroring the `draw()` override point.
      */
     protected open fun draw(scope: LayerDrawScope) = performDraw(scope)
@@ -100,7 +100,7 @@ internal abstract class AbstractDirectSoftwareRedrawer(
     }
 
     private fun performDraw(scope: LayerDrawScope) = synchronized(drawLock) {
-        // Re-check inside the lock (not just at the call site), matching MetalRedrawer/SoftwareRedrawer:
+        // Re-check inside the lock (not just at the call site), matching MetalRenderContext/SoftwareRenderContext:
         // this is what makes `dispose` and an in-flight frame mutually exclusive.
         if (!isDisposed) {
             with(scope) { drawFrame() }

@@ -1,4 +1,4 @@
-package org.jetbrains.skiko.redrawer
+package org.jetbrains.skiko.rendercontext
 
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -23,24 +23,22 @@ import kotlin.time.Duration.Companion.milliseconds
 internal value class MetalDevice(val ptr: Long)
 
 /**
- * The single per-window Metal on-screen render context ([AWTRedrawer]): it owns the native
+ * The single per-window Metal on-screen render context ([AwtRenderContext]): it owns the native
  * device/adapter lifecycle, the Skia [DirectContext] and on-screen GPU surface for the current frame, and
- * Metal's present + vsync pacing. The frame loop itself lives in the generic [OnScreenRedrawer].
+ * Metal's present + vsync pacing. The frame loop itself lives in the generic [OnScreenRenderer].
  *
- * This class name is part of its JNI symbols (`Java_org_jetbrains_skiko_redrawer_MetalRedrawer_*`) and of
- * the native occlusion up-call ([onOcclusionStateChanged]); both are name-mangled statically into the
- * native sources. The Kotlin class name and the exported native symbols are one unit: renaming either alone unbinds
- * them, and the failure surfaces as an UnsatisfiedLinkError at the first native call, not as a
- * compile error.
+ * Its native methods bind by JNI name mangling, so the class name must match the exported symbols
+ * (`Java_org_jetbrains_skiko_rendercontext_MetalRenderContext_*`); the native occlusion up-call arrives through
+ * [onOcclusionStateChanged].
  *
  * Content to draw is provided by [AwtSurfaceHost.draw].
  *
  * @see "src/awtMain/objectiveC/macos/MetalRedrawerSurface.mm" -- native GPU surface implementation
  */
-internal class MetalRedrawer(
+internal class MetalRenderContext(
     private val host: AwtSurfaceHost,
     private val properties: SkiaLayerProperties
-) : AWTRedrawer {
+) : AwtRenderContext {
 
     companion object {
         init {
@@ -64,7 +62,7 @@ internal class MetalRedrawer(
     private var isDisposed = false
 
     /**
-     * [MetalDevice] initialized for the given [host] or null if [MetalRedrawer] is disposed,
+     * [MetalDevice] initialized for the given [host] or null if [MetalRenderContext] is disposed,
      * so future calls of [device] will throw exception
      */
     private var _device: MetalDevice?
@@ -111,7 +109,7 @@ internal class MetalRedrawer(
      */
     internal val metalDeviceObjcPtr: Long
         get() = synchronized(drawLock) {
-            check(!isDisposed) { "MetalRedrawer is disposed" }
+            check(!isDisposed) { "MetalRenderContext is disposed" }
             getMetalDevicePointer(device.ptr)
         }
 
@@ -124,7 +122,7 @@ internal class MetalRedrawer(
      */
     internal val metalCommandQueueObjcPtr: Long
         get() = synchronized(drawLock) {
-            check(!isDisposed) { "MetalRedrawer is disposed" }
+            check(!isDisposed) { "MetalRenderContext is disposed" }
             getMetalCommandQueuePointer(device.ptr)
         }
 
@@ -199,7 +197,7 @@ internal class MetalRedrawer(
         vSyncer?.waitForVSync()
     }
 
-    // Called from MetalRedrawer.mm
+    // Called from MetalRenderContext.mm
     @Suppress("unused")
     fun onOcclusionStateChanged(isOccluded: Boolean) {
         isWindowOccluded = isOccluded
@@ -311,13 +309,13 @@ internal class MetalRedrawer(
         surface?.flushAndSubmit()
         // Recording only. The caller presents via `finishFrame` or, during a live resize,
         // `finishFrameInLiveResize` on the AppKit main thread.
-        Logger.debug { "MetalRedrawer finished drawing frame" }
+        Logger.debug { "MetalRenderContext finished drawing frame" }
     }
 
     // --- Public standalone RenderContext surface (acquire → draw → present), backed by the same code the
     // on-screen loop uses above. On-screen the loop calls drawFrame; a standalone caller drives these.
     override fun acquireSurface(width: Int, height: Int): Surface = synchronized(drawLock) {
-        check(!isDisposed) { "MetalRedrawer is disposed" }
+        check(!isDisposed) { "MetalRenderContext is disposed" }
         if (!ensureContext()) {
             throw RenderException("Cannot init graphic Metal context")
         }
@@ -391,12 +389,12 @@ internal class MetalRedrawer(
         val y = rootPane.height - globalPosition.y - host.height
         val width = backedLayer.width.coerceAtLeast(0)
         val height = backedLayer.height.coerceAtLeast(0)
-        Logger.debug { "MetalRedrawer#resizeLayers $this {x: $x y: $y width: $width height: $height} rootPane: ${rootPane.size}" }
+        Logger.debug { "MetalRenderContext#resizeLayers $this {x: $x y: $y width: $width height: $height} rootPane: ${rootPane.size}" }
         resizeLayers(device.ptr, x, y, width, height)
     }
 
     override fun setVisible(isVisible: Boolean) = synchronized(drawLock) {
-        Logger.debug { "MetalRedrawer#setVisible($isVisible)" }
+        Logger.debug { "MetalRenderContext#setVisible($isVisible)" }
         // `dispose` may run concurrently with this (both take `drawLock`); once disposed there is no
         // native device left to touch.
         if (!isDisposed) {
@@ -453,7 +451,7 @@ internal class MetalRedrawer(
     private external fun finishFrameInLiveResize(device: Long)
 
     // GPU-interop handle getters: read the id<MTLDevice>/id<MTLCommandQueue> address out of the native
-    // MetalDevice struct. Implemented in MetalRedrawer.mm.
+    // MetalDevice struct. Implemented in MetalRenderContext.mm.
     private external fun getMetalDevicePointer(device: Long): Long
     private external fun getMetalCommandQueuePointer(device: Long): Long
 }

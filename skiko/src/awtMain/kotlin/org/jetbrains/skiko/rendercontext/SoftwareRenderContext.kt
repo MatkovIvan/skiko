@@ -1,4 +1,4 @@
-package org.jetbrains.skiko.redrawer
+package org.jetbrains.skiko.rendercontext
 
 import kotlinx.coroutines.*
 import org.jetbrains.skia.*
@@ -10,19 +10,19 @@ import java.awt.color.ColorSpace
 import java.awt.image.*
 
 /**
- * The single per-window Software on-screen render context ([AWTRedrawer]): owns the CPU-backed Skia
+ * The single per-window Software on-screen render context ([AwtRenderContext]): owns the CPU-backed Skia
  * [Bitmap] surface used to render each frame and blits it to the AWT peer. The frame loop itself lives in
- * the generic [OnScreenRedrawer]; this type owns only the surface.
+ * the generic [OnScreenRenderer]; this type owns only the surface.
  * An optional software frame limiter runs in [paceBeforeFrame].
  */
-internal class SoftwareRedrawer(
+internal class SoftwareRenderContext(
     private val host: AwtSurfaceHost,
     properties: SkiaLayerProperties
-) : AWTRedrawer {
+) : AwtRenderContext {
 
     /**
      * Guards the CPU-backed [storage]/[canvas] surface, mirroring the `drawLock` discipline in
-     * [MetalRedrawer]: [dispose] takes it before releasing [storage], and the per-frame render path
+     * [MetalRenderContext]: [dispose] takes it before releasing [storage], and the per-frame render path
      * ([performDraw]) takes the same lock and re-checks [isDisposed] inside it before touching [storage].
      * On this backend the frame loop and [dispose] both always run on the EDT; the lock still guards them
      * so every backend enforces the same discipline, whether or not it renders off the EDT.
@@ -76,7 +76,7 @@ internal class SoftwareRedrawer(
     }
 
     override fun acquireSurface(width: Int, height: Int): Surface = synchronized(drawLock) {
-        check(!isDisposed) { "SoftwareRedrawer is disposed" }
+        check(!isDisposed) { "SoftwareRenderContext is disposed" }
         if (standaloneSurface == null || width != standaloneWidth || height != standaloneHeight) {
             standaloneSurface?.close()
             standaloneSurface = Surface.makeRaster(ImageInfo.makeS32(width, height, ColorAlphaType.PREMUL))
@@ -112,7 +112,7 @@ internal class SoftwareRedrawer(
     }
 
     private fun performDraw(scope: LayerDrawScope) = synchronized(drawLock) {
-        // Re-check inside the lock (not just at the call site), matching MetalRedrawer: this is what makes
+        // Re-check inside the lock (not just at the call site), matching MetalRenderContext: this is what makes
         // `dispose` and an in-flight frame mutually exclusive.
         if (!isDisposed) {
             with(scope) { drawFrame() }

@@ -1,11 +1,11 @@
-package org.jetbrains.skiko.redrawer
+package org.jetbrains.skiko.rendercontext
 
 import org.jetbrains.skiko.*
 
-internal class LinuxSoftwareRedrawer(
+internal class LinuxSoftwareRenderContext(
     private val host: AwtSurfaceHost,
     properties: SkiaLayerProperties
-) : AbstractDirectSoftwareRedrawer(host, properties) {
+) : AbstractDirectSoftwareRenderContext(host, properties) {
 
     init {
         val scale = host.contentScale

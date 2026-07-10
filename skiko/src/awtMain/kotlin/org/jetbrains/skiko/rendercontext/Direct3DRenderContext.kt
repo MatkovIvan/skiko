@@ -1,4 +1,4 @@
-package org.jetbrains.skiko.redrawer
+package org.jetbrains.skiko.rendercontext
 
 import kotlinx.coroutines.withContext
 import org.jetbrains.skia.*
@@ -9,24 +9,23 @@ import org.jetbrains.skiko.*
 import java.lang.ref.Reference
 
 /**
- * The single per-window Direct3D on-screen render context ([AWTRedrawer]): it owns the native DirectX12
+ * The single per-window Direct3D on-screen render context ([AwtRenderContext]): it owns the native DirectX12
  * device/adapter and swap chain lifecycle, the Skia [DirectContext] and double-buffered on-screen GPU
  * surfaces for the current frame, and the present/swap (with vsync fused into the swap). The frame loop
- * itself lives in the generic [OnScreenRedrawer].
+ * itself lives in the generic [OnScreenRenderer].
  *
- * This class name is part of its statically name-mangled JNI symbols. The Kotlin class name and the exported native symbols are one unit: renaming either alone unbinds
- * them, and the failure surfaces as an UnsatisfiedLinkError at the first native call, not as a
- * compile error.
+ * Its native methods bind by JNI name mangling, so the class name must match the exported symbols
+ * (`Java_org_jetbrains_skiko_rendercontext_Direct3DRenderContext_*`).
  *
  * Content to draw is provided by [AwtSurfaceHost.draw].
  *
  * @see "src/awtMain/cpp/windows/direct3DContext.cc" -- native GPU surface implementation
  * @see "src/awtMain/cpp/windows/directXRedrawer.cc" -- native device/swap chain implementation
  */
-internal class Direct3DRedrawer(
+internal class Direct3DRenderContext(
     private val host: AwtSurfaceHost,
     private val properties: SkiaLayerProperties
-) : AWTRedrawer {
+) : AwtRenderContext {
 
     /**
      * Guards every native/JNI touch point: device+adapter lifetime, the swap chain, the Skia
@@ -69,7 +68,7 @@ internal class Direct3DRedrawer(
      */
     internal val direct3DAdapterPtr: Long
         get() = synchronized(drawLock) {
-            check(!isDisposed) { "Direct3DRedrawer is disposed" }
+            check(!isDisposed) { "Direct3DRenderContext is disposed" }
             getDirectXAdapterPointer(device)
         }
 
@@ -82,7 +81,7 @@ internal class Direct3DRedrawer(
      */
     internal val direct3DDevicePtr: Long
         get() = synchronized(drawLock) {
-            check(!isDisposed) { "Direct3DRedrawer is disposed" }
+            check(!isDisposed) { "Direct3DRenderContext is disposed" }
             getDirectXDevicePointer(device)
         }
 
@@ -95,7 +94,7 @@ internal class Direct3DRedrawer(
      */
     internal val direct3DQueuePtr: Long
         get() = synchronized(drawLock) {
-            check(!isDisposed) { "Direct3DRedrawer is disposed" }
+            check(!isDisposed) { "Direct3DRenderContext is disposed" }
             getDirectXQueuePointer(device)
         }
 
@@ -160,7 +159,7 @@ internal class Direct3DRedrawer(
     }
 
     override fun acquireSurface(width: Int, height: Int): Surface = synchronized(drawLock) {
-        check(!isDisposed) { "Direct3DRedrawer is disposed" }
+        check(!isDisposed) { "Direct3DRenderContext is disposed" }
         if (!ensureContext()) {
             throw RenderException("Cannot init graphic Direct3D context")
         }

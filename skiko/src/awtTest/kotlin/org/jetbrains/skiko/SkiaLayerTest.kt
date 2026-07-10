@@ -11,11 +11,11 @@ import org.jetbrains.skia.paragraph.FontCollection
 import org.jetbrains.skia.paragraph.ParagraphBuilder
 import org.jetbrains.skia.paragraph.ParagraphStyle
 import org.jetbrains.skia.paragraph.TextStyle
-import org.jetbrains.skiko.redrawer.AWTRedrawer
-import org.jetbrains.skiko.redrawer.MetalRedrawer
-import org.jetbrains.skiko.redrawer.MetalVSyncer
-import org.jetbrains.skiko.redrawer.OnScreenRedrawer
-import org.jetbrains.skiko.redrawer.createRedrawer
+import org.jetbrains.skiko.rendercontext.AwtRenderContext
+import org.jetbrains.skiko.rendercontext.MetalRenderContext
+import org.jetbrains.skiko.rendercontext.MetalVSyncer
+import org.jetbrains.skiko.rendercontext.OnScreenRenderer
+import org.jetbrains.skiko.rendercontext.createRenderContext
 import org.jetbrains.skiko.redrawer.defaultIsTransparentBackgroundSupported
 import org.jetbrains.skiko.swing.SkiaSwingLayer
 import org.jetbrains.skiko.util.ScreenshotTestRule
@@ -107,8 +107,8 @@ class SkiaLayerTest {
             window.addKeyListener(object : KeyAdapter() {
                 override fun keyTyped(e: KeyEvent?) {
                     launch {
-                        val redrawer = window.layer.redrawer!! as OnScreenRedrawer
-                        require(redrawer.ctx is MetalRedrawer)
+                        val redrawer = window.layer.redrawer!! as OnScreenRenderer
+                        require(redrawer.ctx is MetalRenderContext)
                         redrawer.renderImmediately()
                         counter1 += 1
                         redrawer.renderImmediately()
@@ -561,16 +561,16 @@ class SkiaLayerTest {
     }
 
     /**
-     * A test [AWTRedrawer] that constructs successfully but fails at frame time (subclasses override
+     * A test [AwtRenderContext] that constructs successfully but fails at frame time (subclasses override
      * [renderFrame] to throw), used to exercise the runtime render-API fallback. The generic
-     * [org.jetbrains.skiko.redrawer.OnScreenRedrawer] loop drives it, so a failing [renderFrame] override
+     * [org.jetbrains.skiko.rendercontext.OnScreenRenderer] loop drives it, so a failing [renderFrame] override
      * is enough to trigger the fallback.
      */
     @OptIn(ExperimentalSkikoApi::class)
-    private abstract class BaseTestRedrawer(
+    private abstract class BaseTestRenderContext(
         val layer: SkiaLayer,
         override val graphicsApi: GraphicsApi,
-    ) : AWTRedrawer {
+    ) : AwtRenderContext {
         override val deviceName: String? get() = "Test"
         override val renderInfo: String get() = ""
         override val directContext: org.jetbrains.skia.DirectContext? get() = null
@@ -585,7 +585,7 @@ class SkiaLayerTest {
     @Test(timeout = 60000)
     fun `fallback to software renderer, fail on init context`() = uiTest {
         testFallbackToSoftware { layer, renderApi, _ ->
-            object : BaseTestRedrawer(layer, renderApi) {
+            object : BaseTestRenderContext(layer, renderApi) {
                 override suspend fun renderFrame(scope: LayerDrawScope, immediate: Boolean) {
                     throw RenderException("Cannot init graphic context")
                 }
@@ -601,7 +601,7 @@ class SkiaLayerTest {
     @Test(timeout = 60000)
     fun `fallback to software renderer, fail on draw`() = uiTest {
         testFallbackToSoftware { layer, renderApi, _ ->
-            object : BaseTestRedrawer(layer, renderApi) {
+            object : BaseTestRenderContext(layer, renderApi) {
                 override suspend fun renderFrame(scope: LayerDrawScope, immediate: Boolean) {
                     throw RenderException()
                 }
@@ -610,7 +610,7 @@ class SkiaLayerTest {
     }
 
     private suspend fun UiTestScope.testFallbackToSoftware(
-        nonSoftware: (SkiaLayer, GraphicsApi, SkiaLayerProperties) -> AWTRedrawer
+        nonSoftware: (SkiaLayer, GraphicsApi, SkiaLayerProperties) -> AwtRenderContext
     ) {
         val window = UiTestWindow(
             renderFactory = overrideNonSoftware(nonSoftware)
@@ -640,23 +640,23 @@ class SkiaLayerTest {
 
     // Builds SOFTWARE_COMPAT with the real backend and every other API with [nonSoftware], so a test can make
     // the hardware backends fail and assert the fallback to software. Each backend is driven by the real
-    // [OnScreenRedrawer] loop, exactly like the production factory.
+    // [OnScreenRenderer] loop, exactly like the production factory.
     private fun overrideNonSoftware(
-        nonSoftware: (SkiaLayer, GraphicsApi, SkiaLayerProperties) -> AWTRedrawer
+        nonSoftware: (SkiaLayer, GraphicsApi, SkiaLayerProperties) -> AwtRenderContext
     ): RenderFactory = RenderFactory { layer, renderApi, analytics, properties ->
         val backend = if (renderApi == GraphicsApi.SOFTWARE_COMPAT) {
-            createRedrawer(layer, renderApi, properties)
+            createRenderContext(layer, renderApi, properties)
         } else {
             nonSoftware(layer, renderApi, properties)
         }
-        OnScreenRedrawer(layer, backend, analytics)
+        OnScreenRenderer(layer, backend, analytics)
     }
 
     @Test(timeout = 60000)
     fun `renderApi change callback is invoked on fallback`() = uiTest {
         val window = UiTestWindow(
             renderFactory = overrideNonSoftware { layer, renderApi, _ ->
-                object : BaseTestRedrawer(layer, renderApi) {
+                object : BaseTestRenderContext(layer, renderApi) {
                     override suspend fun renderFrame(scope: LayerDrawScope, immediate: Boolean) {
                         throw RenderException()
                     }
@@ -1130,7 +1130,7 @@ class SkiaLayerTest {
     @Test
     fun `temporary change is not visible with needRender(throttledToVsync = false)`() = uiTest {
         assumeTrue(hostOs.isMacOS)
-        // The separation between update and draw is only implemented in MetalRedrawer at the moment
+        // The separation between update and draw is only implemented in MetalRenderContext at the moment
         // Don't use assumeTrue, as uiTest iterates over multiple renderers,
         // and if one of them skipped, the whole test is skipped
         if (renderApi != GraphicsApi.METAL) return@uiTest

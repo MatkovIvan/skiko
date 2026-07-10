@@ -28,26 +28,21 @@ import org.jetbrains.skiko.makeGLRenderTarget
  * with a [SoftwareSwingPainter]; there is no zero-copy shared-texture path, so [texturePtr] stays 0).
  *
  * ### Class name is load-bearing for JNI
- * This class name is part of the JNI symbols the `external fun`s below bind to
- * (`Java_org_jetbrains_skiko_swing_LinuxOpenGLSwingRedrawer_makeOffScreenContext`, ...), which are
- * name-mangled statically into the native sources. The Kotlin class name and the exported native symbols are one unit: renaming either alone unbinds
- * them, and the failure surfaces as an UnsatisfiedLinkError at the first native call, not as a
- * compile error.
+ * The `external fun`s below bind by JNI name mangling, so the class name must match the exported symbols
+ * (`Java_org_jetbrains_skiko_swing_LinuxOpenGLSwingRenderContext_makeOffScreenContext`, ...).
  *
  * ### Frame lifecycle
  * A frame is opened lazily in [acquireSurface] (make pbuffer, `startRendering`, bind a fresh texture+FBO, make
  * a per-frame GL [DirectContext] and surface) and stays **current** through [present] so the caller can read
  * pixels back off the surface immediately after presenting. The GL context is only reset (`finishRendering` +
- * texture/context teardown) when the next [acquireSurface] opens the following frame, or at [close]. This
- * keeps the native GL calls (`startRendering` through `finishRendering`) grouped as one per-frame
- * sequence within the acquire→draw→present shape.
+ * texture/context teardown) when the next [acquireSurface] opens the following frame, or at [close].
  *
  * Not thread-safe — drive it from a single render thread, mirroring [RenderContext]'s contract.
  *
  * @see "src/awtMain/cpp/linux/swingRedrawer.cc"
  */
 @OptIn(ExperimentalSkikoApi::class)
-internal class LinuxOpenGLSwingRedrawer(
+internal class LinuxOpenGLSwingRenderContext(
     private val gpuResourceCacheLimit: Long = SkikoProperties.gpuResourceCacheLimit,
 ) : SwingRenderContext {
 
@@ -73,7 +68,7 @@ internal class LinuxOpenGLSwingRedrawer(
     override val directContext: DirectContext? get() = context
 
     override fun acquireSurface(width: Int, height: Int): Surface {
-        check(!closed) { "LinuxOpenGLSwingRedrawer is disposed" }
+        check(!closed) { "LinuxOpenGLSwingRenderContext is disposed" }
         require(width > 0 && height > 0) { "Surface size must be positive, was ${width}x$height" }
 
         // Finish the previous frame (its context was left current for pixel readback) before starting a new one.

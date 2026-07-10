@@ -36,18 +36,16 @@ import org.jetbrains.skiko.hostOs
  *    path is available — see [texturePtr] / [AcceleratedSwingPainter]).
  *
  * ### Class name is load-bearing for JNI
- * This class name is part of the JNI ABI: the native symbols are statically name-mangled from the
- * fully-qualified class name, so the four `external fun`s below bind to
- * `Java_org_jetbrains_skiko_swing_MetalSwingRedrawer_makeMetalContext` (and `..._makeMetalTexture`, ...)
- * with no generated glue. Renaming the class would break those bindings until the native
- * `MetalSwingRedrawer.mm` is rebuilt to match.
+ * The `external fun`s below bind by JNI name mangling, so the class name must match the exported symbols
+ * (`Java_org_jetbrains_skiko_swing_MetalSwingRenderContext_makeMetalContext`, `..._makeMetalTexture`, ...).
+ * The context is built from an adapter, without a window handle.
  *
  * Not thread-safe — drive it from a single render thread, mirroring [RenderContext]'s contract.
  *
- * @see "src/awtMain/objectiveC/macos/MetalSwingRedrawer.mm"
+ * @see "src/awtMain/objectiveC/macos/MetalSwingRenderContext.mm"
  */
 @OptIn(ExperimentalSkikoApi::class)
-internal class MetalSwingRedrawer(
+internal class MetalSwingRenderContext(
     adapterPriority: GpuPriority = SkikoProperties.gpuPriority,
     private val gpuResourceCacheLimit: Long = SkikoProperties.gpuResourceCacheLimit,
 ) : SwingRenderContext {
@@ -82,7 +80,7 @@ internal class MetalSwingRedrawer(
     override val directContext: DirectContext get() = context
 
     override fun acquireSurface(width: Int, height: Int): Surface {
-        check(!closed) { "MetalSwingRedrawer is disposed" }
+        check(!closed) { "MetalSwingRenderContext is disposed" }
         require(width > 0 && height > 0) { "Surface size must be positive, was ${width}x$height" }
         require(width <= adapter.maxTextureSize && height <= adapter.maxTextureSize) {
             "Texture dimensions must be less than maximum allowed size: ${adapter.maxTextureSize}, got $width x $height"

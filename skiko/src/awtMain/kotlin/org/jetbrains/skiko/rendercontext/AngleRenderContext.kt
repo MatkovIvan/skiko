@@ -1,28 +1,25 @@
-package org.jetbrains.skiko.redrawer
+package org.jetbrains.skiko.rendercontext
 
 import org.jetbrains.skia.*
 import org.jetbrains.skiko.*
 
 /**
- * The single per-window ANGLE (EGL-over-D3D11) on-screen render context ([AWTRedrawer]): it owns the
+ * The single per-window ANGLE (EGL-over-D3D11) on-screen render context ([AwtRenderContext]): it owns the
  * native ANGLE device lifecycle, the Skia [DirectContext] and on-screen GPU surface for the current frame,
  * and the present/swap (with vsync in the swap). The frame loop itself lives in the generic
- * [OnScreenRedrawer].
+ * [OnScreenRenderer].
  *
- * This class name is part of its JNI symbols, including the file-level facade
- * `Java_org_jetbrains_skiko_redrawer_AngleRedrawerKt_*` generated for the top-level `external fun`s.
- * The Kotlin class name and the exported native symbols are one unit: renaming either alone unbinds
- * them, and the failure surfaces as an UnsatisfiedLinkError at the first native call, not as a
- * compile error.
+ * Its native methods are top-level `external fun`s, so their JNI symbols live on the file facade
+ * (`Java_org_jetbrains_skiko_rendercontext_AngleRenderContextKt_*`); the file name must match those symbols.
  *
  * Content to draw is provided by [AwtSurfaceHost.draw].
  *
- * @see "src/awtMain/cpp/windows/AngleRedrawer.cc" -- native implementation
+ * @see "src/awtMain/cpp/windows/AngleRenderContext.cc" -- native implementation
  */
-internal class AngleRedrawer(
+internal class AngleRenderContext(
     private val host: AwtSurfaceHost,
     private val properties: SkiaLayerProperties
-) : AWTRedrawer {
+) : AwtRenderContext {
     init {
         try {
             loadAngleLibrary()
@@ -35,7 +32,7 @@ internal class AngleRedrawer(
      * Guards every native/JNI touch point: device lifetime, the Skia [DirectContext]/surface, and
      * presentation. [dispose] takes this lock before releasing any native resource, and the per-frame render
      * path ([drawAndSwap]) takes the *same* lock and re-checks [isDisposed] *inside* it before making any
-     * native call, mirroring [MetalRedrawer]'s and [Direct3DRedrawer]'s discipline.
+     * native call, mirroring [MetalRenderContext]'s and [Direct3DRenderContext]'s discipline.
      */
     private val drawLock = Any()
 
@@ -63,7 +60,7 @@ internal class AngleRedrawer(
         }
         deviceName = adapterName.also { adapterName ->
             if (adapterName != null && !isVideoCardSupported(GraphicsApi.ANGLE, hostOs, adapterName)) {
-                throw RenderException("Cannot create ANGLE redrawer.")
+                throw RenderException("Cannot create ANGLE render context.")
             }
         }
     }
@@ -113,7 +110,7 @@ internal class AngleRedrawer(
     }
 
     override fun acquireSurface(width: Int, height: Int): Surface = synchronized(drawLock) {
-        check(!isDisposed) { "AngleRedrawer is disposed" }
+        check(!isDisposed) { "AngleRenderContext is disposed" }
         makeCurrent(device)
         if (!ensureContext()) {
             throw RenderException("Cannot init graphic context")

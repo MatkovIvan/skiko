@@ -1,13 +1,13 @@
-package org.jetbrains.skiko.redrawer
+package org.jetbrains.skiko.rendercontext
 
 import kotlinx.coroutines.*
 import org.jetbrains.skia.*
 import org.jetbrains.skiko.*
 
 /**
- * The single per-window Windows (WGL) OpenGL on-screen render context ([AWTRedrawer]): it owns the
+ * The single per-window Windows (WGL) OpenGL on-screen render context ([AwtRenderContext]): it owns the
  * native WGL device/context lifecycle, the Skia [DirectContext] and on-screen GPU surface for the current
- * frame, and the present/swap. The frame loop itself lives in the generic [OnScreenRedrawer], which
+ * frame, and the present/swap. The frame loop itself lives in the generic [OnScreenRenderer], which
  * drives this per-window render context.
  *
  * Pacing is **per window**: each frame draws + swaps + `glFinish`es on the EDT, then (if vsync is enabled)
@@ -18,10 +18,10 @@ import org.jetbrains.skiko.*
  *
  * Content to draw is provided by [AwtSurfaceHost.draw].
  */
-internal class WindowsOpenGLRedrawer(
+internal class WindowsOpenGLRenderContext(
     private val host: AwtSurfaceHost,
     private val properties: SkiaLayerProperties
-) : AWTRedrawer {
+) : AwtRenderContext {
     init {
         loadOpenGLLibrary()
     }
@@ -84,7 +84,7 @@ internal class WindowsOpenGLRedrawer(
     }
 
     override fun dispose() {
-        check(!isDisposed) { "WindowsOpenGLRedrawer is disposed" }
+        check(!isDisposed) { "WindowsOpenGLRenderContext is disposed" }
         isDisposed = true
         makeCurrent()
         disposeSurface()
@@ -113,7 +113,7 @@ internal class WindowsOpenGLRedrawer(
     }
 
     override fun acquireSurface(width: Int, height: Int): Surface {
-        check(!isDisposed) { "WindowsOpenGLRedrawer is disposed" }
+        check(!isDisposed) { "WindowsOpenGLRenderContext is disposed" }
         makeCurrent()
         if (!ensureContext()) {
             throw RenderException("Cannot init graphic context")

@@ -1,4 +1,4 @@
-package org.jetbrains.skiko.redrawer
+package org.jetbrains.skiko.rendercontext
 
 import org.jetbrains.skiko.GraphicsApi
 import org.jetbrains.skiko.OS
@@ -7,16 +7,16 @@ import org.jetbrains.skiko.SkiaLayerProperties
 import org.jetbrains.skiko.hostOs
 
 /**
- * Builds the [AWTRedrawer] for [renderApi] on the current OS, or throws
+ * Builds the [AwtRenderContext] for [renderApi] on the current OS, or throws
  * [org.jetbrains.skiko.RenderException] if that API cannot be initialised. Delegates to the view-decoupled
- * [createRedrawer] overload through the layer's [SkiaLayer.surfaceHost]. [SkiaLayer] reaches this through its
+ * [createRenderContext] overload through the layer's [SkiaLayer.surfaceHost]. [SkiaLayer] reaches this through its
  * injectable [org.jetbrains.skiko.RenderFactory] so tests can force a backend.
  */
-internal fun createRedrawer(
+internal fun createRenderContext(
     layer: SkiaLayer,
     renderApi: GraphicsApi,
     properties: SkiaLayerProperties,
-): AWTRedrawer = createRedrawer(layer.surfaceHost, renderApi, properties)
+): AwtRenderContext = createRenderContext(layer.surfaceHost, renderApi, properties)
 
 /**
  * The genuinely view-decoupled construction seam: build exactly [renderApi] for the decoupled [host], or throw
@@ -25,26 +25,26 @@ internal fun createRedrawer(
  * push-only `SkiaPanel` presenter build on — neither needs a concrete [SkiaLayer]. The per-API constructors
  * load their own native libraries.
  */
-internal fun createRedrawer(
+internal fun createRenderContext(
     host: AwtSurfaceHost,
     renderApi: GraphicsApi,
     properties: SkiaLayerProperties,
-): AWTRedrawer = when (hostOs) {
+): AwtRenderContext = when (hostOs) {
     OS.MacOS -> when (renderApi) {
-        GraphicsApi.SOFTWARE_COMPAT, GraphicsApi.SOFTWARE_FAST -> SoftwareRedrawer(host, properties)
-        else -> MetalRedrawer(host, properties)
+        GraphicsApi.SOFTWARE_COMPAT, GraphicsApi.SOFTWARE_FAST -> SoftwareRenderContext(host, properties)
+        else -> MetalRenderContext(host, properties)
     }
     OS.Windows -> when (renderApi) {
-        GraphicsApi.SOFTWARE_COMPAT -> SoftwareRedrawer(host, properties)
-        GraphicsApi.SOFTWARE_FAST -> WindowsSoftwareRedrawer(host, properties)
-        GraphicsApi.OPENGL -> WindowsOpenGLRedrawer(host, properties)
-        GraphicsApi.ANGLE -> AngleRedrawer(host, properties)
-        else -> Direct3DRedrawer(host, properties)
+        GraphicsApi.SOFTWARE_COMPAT -> SoftwareRenderContext(host, properties)
+        GraphicsApi.SOFTWARE_FAST -> WindowsSoftwareRenderContext(host, properties)
+        GraphicsApi.OPENGL -> WindowsOpenGLRenderContext(host, properties)
+        GraphicsApi.ANGLE -> AngleRenderContext(host, properties)
+        else -> Direct3DRenderContext(host, properties)
     }
     OS.Linux -> when (renderApi) {
-        GraphicsApi.SOFTWARE_COMPAT -> SoftwareRedrawer(host, properties)
-        GraphicsApi.SOFTWARE_FAST -> LinuxSoftwareRedrawer(host, properties)
-        else -> LinuxOpenGLRedrawer(host, properties)
+        GraphicsApi.SOFTWARE_COMPAT -> SoftwareRenderContext(host, properties)
+        GraphicsApi.SOFTWARE_FAST -> LinuxSoftwareRenderContext(host, properties)
+        else -> LinuxOpenGLRenderContext(host, properties)
     }
     else -> throw UnsupportedOperationException("AWT doesn't support $hostOs")
 }

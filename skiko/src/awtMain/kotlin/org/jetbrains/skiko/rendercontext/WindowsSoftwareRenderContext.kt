@@ -1,4 +1,4 @@
-package org.jetbrains.skiko.redrawer
+package org.jetbrains.skiko.rendercontext
 
 import org.jetbrains.skia.impl.interopScope
 import org.jetbrains.skia.impl.InteropPointer
@@ -6,10 +6,10 @@ import org.jetbrains.skia.SurfaceProps
 import org.jetbrains.skiko.SkiaLayerProperties
 import org.jetbrains.skiko.RenderException
 
-internal class WindowsSoftwareRedrawer(
+internal class WindowsSoftwareRenderContext(
     host: AwtSurfaceHost,
     properties: SkiaLayerProperties
-) : AbstractDirectSoftwareRedrawer(host, properties) {
+) : AbstractDirectSoftwareRenderContext(host, properties) {
 
     init {
         device = interopScope {

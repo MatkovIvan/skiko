@@ -1,4 +1,4 @@
-package org.jetbrains.skiko.redrawer
+package org.jetbrains.skiko.rendercontext
 
 import org.jetbrains.skiko.ExperimentalSkikoApi
 import org.jetbrains.skiko.GraphicsApi
@@ -9,7 +9,7 @@ import java.awt.Dimension
 /**
  * One per-window, per-API on-screen backend for AWT: it owns the native device/swap-chain lifecycle, the
  * Skia `DirectContext` and the frame's surface, the present/swap, and its own pacing. The frame loop is not
- * here — [OnScreenRedrawer] drives every backend through the hooks below.
+ * here — [OnScreenRenderer] drives every backend through the hooks below.
  *
  * It extends the public, cross-platform [RenderContext]: the [acquireSurface][RenderContext.acquireSurface] /
  * [present][RenderContext.present] / [directContext][RenderContext.directContext] /
@@ -17,14 +17,14 @@ import java.awt.Dimension
  * drive itself. These per-API contexts depend on the decoupled [AwtSurfaceHost] seam rather than a
  * concrete `SkiaLayer`; the genuinely view-less public entry point is `RenderContext.createOffscreen(…)`,
  * while the extra members declared here ([renderFrame], the pacing hooks, [syncBounds]/[setVisible], the
- * frame-scheduling interception seam) are the AWT on-screen hooks that only [OnScreenRedrawer] uses. The same
+ * frame-scheduling interception seam) are the AWT on-screen hooks that only [OnScreenRenderer] uses. The same
  * per-API class therefore backs both the standalone-context conformance and skiko's internal on-screen loop.
  *
  * Every native touch point is guarded by the implementation's own `drawLock`; [dispose] re-checks a disposed
  * flag inside that lock.
  */
 @OptIn(ExperimentalSkikoApi::class)
-internal interface AWTRedrawer : RenderContext {
+internal interface AwtRenderContext : RenderContext {
     /** Adapter/device name for analytics; `null` when unknown. Captured during construction. */
     val deviceName: String?
 
@@ -34,7 +34,7 @@ internal interface AWTRedrawer : RenderContext {
     fun isTransparentBackgroundSupported(): Boolean
 
     /**
-     * Whether a non-vsync-throttled [OnScreenRedrawer.needRender] should also run [SkiaLayer.update] on a
+     * Whether a non-vsync-throttled [OnScreenRenderer.needRender] should also run [SkiaLayer.update] on a
      * separate coalescing ticker (an input-latency optimisation used only by Metal). Default: `false`, so the
      * loop runs a single combined update+draw ticker.
      */
@@ -74,25 +74,25 @@ internal interface AWTRedrawer : RenderContext {
     /**
      * Whether the platform is currently the frame source instead of skiko's loop — macOS live resize, where
      * AppKit presents synchronously inside a `CATransaction`. While this returns `true`,
-     * [OnScreenRedrawer.needRender] routes each redraw to [onFrameSchedulingIntercepted] instead of scheduling
+     * [OnScreenRenderer.needRender] routes each redraw to [onFrameSchedulingIntercepted] instead of scheduling
      * through its dispatcher, so the two don't race. Default `false`: the loop drives every frame.
      */
     fun interceptFrameScheduling(): Boolean = false
 
     /**
      * Services a redraw request while [interceptFrameScheduling] returns `true`: present through the context's
-     * own platform-driven path. [throttledToVsync] mirrors [OnScreenRedrawer.needRender]. Default: nothing.
+     * own platform-driven path. [throttledToVsync] mirrors [OnScreenRenderer.needRender]. Default: nothing.
      */
     fun onFrameSchedulingIntercepted(throttledToVsync: Boolean) {}
 
     /**
-     * Hands the backend the loop's frame entry points, once, during [OnScreenRedrawer] construction. Only a
+     * Hands the backend the loop's frame entry points, once, during [OnScreenRenderer] construction. Only a
      * backend that can become the platform's frame source ([interceptFrameScheduling]) needs to keep it.
      * Default: ignored.
      */
     fun attachFrameHost(host: FrameHost) {}
 
-    /** Release all native/GPU resources. Called once by [OnScreenRedrawer.dispose]. */
+    /** Release all native/GPU resources. Called once by [OnScreenRenderer.dispose]. */
     fun dispose()
 
     /**
@@ -105,10 +105,10 @@ internal interface AWTRedrawer : RenderContext {
 
 /**
  * The frame loop's entry points, as seen by a backend that is temporarily the platform's own frame source
- * (macOS live resize). Implemented by [OnScreenRedrawer].
+ * (macOS live resize). Implemented by [OnScreenRenderer].
  */
 internal interface FrameHost {
-    /** Schedules a regular loop-driven frame, as [OnScreenRedrawer.needRender] would. */
+    /** Schedules a regular loop-driven frame, as [OnScreenRenderer.needRender] would. */
     fun requestFrame(throttledToVsync: Boolean)
 
     /**

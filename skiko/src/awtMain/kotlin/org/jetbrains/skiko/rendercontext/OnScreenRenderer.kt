@@ -1,6 +1,6 @@
 @file:OptIn(ExperimentalSkikoApi::class)
 
-package org.jetbrains.skiko.redrawer
+package org.jetbrains.skiko.rendercontext
 
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.skiko.ExperimentalSkikoApi
@@ -12,20 +12,21 @@ import org.jetbrains.skiko.SkiaLayerAnalytics.DeviceAnalytics
 import org.jetbrains.skiko.LayerDrawScope
 import org.jetbrains.skiko.Version
 import org.jetbrains.skiko.hostOs
+import org.jetbrains.skiko.redrawer.Redrawer
 import java.awt.Dimension
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The single generic on-screen frame loop for AWT [SkiaLayer]s: it owns the coalescing frame dispatcher and
- * drives any [AWTRedrawer] through its pacing/present hooks, so the scheduling logic exists once here rather
- * than per backend. Each backend places its pacing by implementing [AWTRedrawer.paceBeforeFrame] and/or
- * [AWTRedrawer.paceAfterFrame]. Metal additionally opts into a separate update ticker
- * ([AWTRedrawer.separatesUpdateAndDraw]) so a non-throttled [needRender] can run [SkiaLayer.update] without
+ * drives any [AwtRenderContext] through its pacing/present hooks, so the scheduling logic exists once here rather
+ * than per backend. Each backend places its pacing by implementing [AwtRenderContext.paceBeforeFrame] and/or
+ * [AwtRenderContext.paceAfterFrame]. Metal additionally opts into a separate update ticker
+ * ([AwtRenderContext.separatesUpdateAndDraw]) so a non-throttled [needRender] can run [SkiaLayer.update] without
  * waiting for the vsync-paced frame.
  */
-internal class OnScreenRedrawer(
+internal class OnScreenRenderer(
     private val layer: SkiaLayer,
-    val ctx: AWTRedrawer,
+    val ctx: AwtRenderContext,
     analytics: SkiaLayerAnalytics,
 ) : Redrawer, FrameHost {
     private val rendererAnalytics = analytics.renderer(Version.skiko, hostOs, ctx.graphicsApi)
@@ -73,10 +74,10 @@ internal class OnScreenRedrawer(
     }
 
     override fun needRender(throttledToVsync: Boolean) {
-        check(!isDisposed) { "OnScreenRedrawer is disposed" }
+        check(!isDisposed) { "OnScreenRenderer is disposed" }
 
         // A context that drives its own frames (e.g. macOS live resize) takes over here instead of the
-        // internal dispatcher; see [AWTRedrawer.interceptFrameScheduling].
+        // internal dispatcher; see [AwtRenderContext.interceptFrameScheduling].
         if (ctx.interceptFrameScheduling()) {
             ctx.onFrameSchedulingIntercepted(throttledToVsync)
             return
@@ -90,7 +91,7 @@ internal class OnScreenRedrawer(
     }
 
     override fun renderImmediately() {
-        check(!isDisposed) { "OnScreenRedrawer is disposed" }
+        check(!isDisposed) { "OnScreenRenderer is disposed" }
         layer.update(System.nanoTime())
         if (!isDisposed) { // layer may be disposed in user code during `update`
             runBlocking { drawFrame(immediate = true) }
