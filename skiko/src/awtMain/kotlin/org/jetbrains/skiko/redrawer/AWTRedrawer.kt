@@ -1,7 +1,9 @@
 package org.jetbrains.skiko.redrawer
 
+import org.jetbrains.skiko.ExperimentalSkikoApi
 import org.jetbrains.skiko.GraphicsApi
 import org.jetbrains.skiko.LayerDrawScope
+import org.jetbrains.skiko.RenderContext
 import java.awt.Dimension
 
 /**
@@ -9,13 +11,15 @@ import java.awt.Dimension
  * Skia `DirectContext` and the frame's surface, the present/swap, and its own pacing. The frame loop is not
  * here — [OnScreenRedrawer] drives every backend through the hooks below.
  *
+ * It extends the public [RenderContext] (its acquireSurface/present/directContext/graphicsApi are the
+ * view-decoupled primitive); the members below are the AWT on-screen hooks only [OnScreenRedrawer] uses, so
+ * one per-API class backs both the standalone context and skiko's loop.
+ *
  * Every native touch point is guarded by the implementation's own `drawLock`; [dispose] re-checks a disposed
  * flag inside that lock.
  */
-internal interface AWTRedrawer {
-    /** The graphics API this context renders with (for analytics + [OnScreenRedrawer.renderInfo]). */
-    val graphicsApi: GraphicsApi
-
+@OptIn(ExperimentalSkikoApi::class)
+internal interface AWTRedrawer : RenderContext {
     /** Adapter/device name for analytics; `null` when unknown. Captured during construction. */
     val deviceName: String?
 
@@ -85,6 +89,13 @@ internal interface AWTRedrawer {
 
     /** Release all native/GPU resources. Called once by [OnScreenRedrawer.dispose]. */
     fun dispose()
+
+    /**
+     * [RenderContext.close] for the public standalone path — the on-screen loop calls [dispose] directly, so
+     * this simply funnels a public [AutoCloseable.close] to the same teardown. Implementations put all their
+     * resource release in [dispose].
+     */
+    override fun close() = dispose()
 }
 
 /**

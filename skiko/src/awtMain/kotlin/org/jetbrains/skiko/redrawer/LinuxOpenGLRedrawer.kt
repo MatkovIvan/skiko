@@ -46,6 +46,7 @@ internal class LinuxOpenGLRedrawer(
 
     override val graphicsApi: GraphicsApi get() = GraphicsApi.OPENGL
     override val deviceName: String?
+    override val directContext: DirectContext? get() = glContext
 
     init {
         var name: String? = null
@@ -143,6 +144,29 @@ internal class LinuxOpenGLRedrawer(
         }
     }
 
+    override fun acquireSurface(width: Int, height: Int): Surface = synchronized(drawLock) {
+        check(!isDisposed) { "LinuxOpenGLRedrawer is disposed" }
+        layer.backedLayer.lockLinuxDrawingSurface { it.makeCurrent(context) }
+        if (!ensureContext()) {
+            throw RenderException("Cannot init graphic context")
+        }
+        createSurface(width, height, layer.pixelGeometry)
+        surface ?: throw RenderException("Cannot create surface for ${width}x$height")
+    }
+
+    override fun present() {
+        if (isDisposed) return
+        synchronized(drawLock) {
+            if (isDisposed) return
+            layer.backedLayer.lockLinuxDrawingSurface {
+                it.makeCurrent(context)
+                glContext?.flush()
+                it.swapBuffers()
+                OpenGLApi.instance.glFlush()
+            }
+        }
+    }
+
     private fun drawAndSwap(scope: LayerDrawScope, turnOffVsync: Boolean) = synchronized(drawLock) {
         if (isDisposed) {
             return
@@ -187,11 +211,10 @@ internal class LinuxOpenGLRedrawer(
         return true
     }
 
-    private fun LayerDrawScope.initSurface() {
-        val glContext = glContext ?: return
+    private fun LayerDrawScope.initSurface() = createSurface(scaledLayerWidth, scaledLayerHeight, pixelGeometry)
 
-        val w = scaledLayerWidth
-        val h = scaledLayerHeight
+    private fun createSurface(w: Int, h: Int, pixelGeometry: PixelGeometry) {
+        val glContext = glContext ?: return
 
         if (isSizeChanged(w, h) || surface == null) {
             disposeSurface()

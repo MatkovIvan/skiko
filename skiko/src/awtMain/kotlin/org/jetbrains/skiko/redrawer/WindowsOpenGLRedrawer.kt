@@ -38,6 +38,7 @@ internal class WindowsOpenGLRedrawer(
     override val graphicsApi: GraphicsApi get() = GraphicsApi.OPENGL
     override var deviceName: String? = null
         private set
+    override val directContext: DirectContext? get() = glContext
 
     private val context = createContext(device, layer.contentHandle, layer.transparency).also {
         if (it == 0L) {
@@ -111,6 +112,24 @@ internal class WindowsOpenGLRedrawer(
         }
     }
 
+    override fun acquireSurface(width: Int, height: Int): Surface {
+        check(!isDisposed) { "WindowsOpenGLRedrawer is disposed" }
+        makeCurrent()
+        if (!ensureContext()) {
+            throw RenderException("Cannot init graphic context")
+        }
+        createSurface(width, height, layer.pixelGeometry)
+        return surface ?: throw RenderException("Cannot create surface for ${width}x$height")
+    }
+
+    override fun present() {
+        if (isDisposed) return
+        makeCurrent()
+        glContext?.flush()
+        swapBuffers()
+        OpenGLApi.instance.glFinish()
+    }
+
     private fun LayerDrawScope.drawFrame() {
         if (!ensureContext()) {
             throw RenderException("Cannot init graphic context")
@@ -137,11 +156,10 @@ internal class WindowsOpenGLRedrawer(
         return true
     }
 
-    private fun LayerDrawScope.initSurface() {
-        val glContext = glContext ?: return
+    private fun LayerDrawScope.initSurface() = createSurface(scaledLayerWidth, scaledLayerHeight, pixelGeometry)
 
-        val w = scaledLayerWidth
-        val h = scaledLayerHeight
+    private fun createSurface(w: Int, h: Int, pixelGeometry: PixelGeometry) {
+        val glContext = glContext ?: return
 
         if (isSizeChanged(w, h) || surface == null) {
             disposeSurface()

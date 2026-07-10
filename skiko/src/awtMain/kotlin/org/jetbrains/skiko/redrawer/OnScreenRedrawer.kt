@@ -1,6 +1,9 @@
+@file:OptIn(ExperimentalSkikoApi::class)
+
 package org.jetbrains.skiko.redrawer
 
 import kotlinx.coroutines.runBlocking
+import org.jetbrains.skiko.ExperimentalSkikoApi
 import org.jetbrains.skiko.FrameDispatcher
 import org.jetbrains.skiko.MainUIDispatcher
 import org.jetbrains.skiko.SkiaLayer

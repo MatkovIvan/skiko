@@ -31,6 +31,8 @@ internal class SoftwareRedrawer(
 
     override val graphicsApi: GraphicsApi get() = GraphicsApi.SOFTWARE_FAST
     override val deviceName: String? get() = "Software"
+    // Software rasterizes on the CPU, so there is no Ganesh DirectContext.
+    override val directContext: DirectContext? get() = null
 
     private val colorModel = ComponentColorModel(
         ColorSpace.getInstance(ColorSpace.CS_sRGB),
@@ -41,6 +43,12 @@ internal class SoftwareRedrawer(
     )
     private val storage = Bitmap()
     private var canvas: Canvas? = null
+
+    // Standalone RenderContext surface (public acquireSurface/present path). Kept separate from the
+    // on-screen `storage`/`canvas` above; present() reads it back into `storage` and reuses the same blit.
+    private var standaloneSurface: Surface? = null
+    private var standaloneWidth = 0
+    private var standaloneHeight = 0
 
     override val renderInfo: String
         get() = renderInfoHeader(layer.renderApi)
@@ -59,7 +67,36 @@ internal class SoftwareRedrawer(
         frameJob?.cancel()
         canvas?.close()
         canvas = null
+        standaloneSurface?.close()
+        standaloneSurface = null
         storage.close()
+    }
+
+    override fun acquireSurface(width: Int, height: Int): Surface = synchronized(drawLock) {
+        check(!isDisposed) { "SoftwareRedrawer is disposed" }
+        if (standaloneSurface == null || width != standaloneWidth || height != standaloneHeight) {
+            standaloneSurface?.close()
+            standaloneSurface = Surface.makeRaster(ImageInfo.makeS32(width, height, ColorAlphaType.PREMUL))
+            standaloneWidth = width
+            standaloneHeight = height
+        }
+        standaloneSurface!!
+    }
+
+    override fun present() = synchronized(drawLock) {
+        if (!isDisposed) {
+            val surface = standaloneSurface
+            if (surface != null) {
+                val w = standaloneWidth
+                val h = standaloneHeight
+                if (storage.width != w || storage.height != h) {
+                    storage.allocPixelsFlags(ImageInfo.makeS32(w, h, ColorAlphaType.PREMUL), false)
+                }
+                surface.flushAndSubmit()
+                surface.readPixels(storage, 0, 0)
+                blitStorage(w, h)
+            }
+        }
     }
 
     override fun isTransparentBackgroundSupported(): Boolean {
@@ -108,11 +145,12 @@ internal class SoftwareRedrawer(
         canvas = Canvas(storage, SurfaceProps(pixelGeometry = pixelGeometry))
     }
 
-    private fun LayerDrawScope.flushFrame() {
-        // Size from the bitmap, not the draw scope: the two diverge when a frame is recorded at a forced size.
-        val w = storage.width
-        val h = storage.height
+    // Size from the bitmap, not the draw scope: the two diverge when a frame is recorded at a forced size.
+    private fun LayerDrawScope.flushFrame() = blitStorage(storage.width, storage.height)
 
+    /** Reads [storage] into a [BufferedImage] and blits it to the AWT peer. Shared by the on-screen loop
+     * ([flushFrame]) and the standalone [present]. */
+    private fun blitStorage(w: Int, h: Int) {
         val bytes = storage.readPixels(storage.imageInfo, dstRowBytes = (w * 4), srcX = 0, srcY = 0)
         if (bytes != null) {
             val buffer = DataBufferByte(bytes, bytes.size)

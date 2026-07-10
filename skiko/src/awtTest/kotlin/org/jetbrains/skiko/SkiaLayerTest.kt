@@ -566,13 +566,19 @@ class SkiaLayerTest {
      * [org.jetbrains.skiko.redrawer.OnScreenRedrawer] loop drives it, so a failing [renderFrame] override
      * is enough to trigger the fallback.
      */
+    @OptIn(ExperimentalSkikoApi::class)
     private abstract class BaseTestRedrawer(
         val layer: SkiaLayer,
         override val graphicsApi: GraphicsApi,
     ) : AWTRedrawer {
         override val deviceName: String? get() = "Test"
         override val renderInfo: String get() = ""
+        override val directContext: org.jetbrains.skia.DirectContext? get() = null
         override fun isTransparentBackgroundSupported() = defaultIsTransparentBackgroundSupported(layer)
+        // These fakes exercise the on-screen fallback via renderFrame only; the standalone surface path is unused.
+        override fun acquireSurface(width: Int, height: Int): org.jetbrains.skia.Surface =
+            throw RenderException("Test render context has no standalone surface")
+        override fun present() = Unit
         override fun dispose() = Unit
     }
 

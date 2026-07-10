@@ -36,6 +36,8 @@ internal abstract class AbstractDirectSoftwareRedrawer(
 
     override val graphicsApi: GraphicsApi get() = GraphicsApi.SOFTWARE_FAST
     override val deviceName: String? get() = "Software"
+    // Direct software rasterizes on the CPU into a native window-backed raster surface: no Ganesh DirectContext.
+    override val directContext: DirectContext? get() = null
 
     // Raster surface for the current frame, recreated on resize; only touched under `drawLock`.
     private var isContextInitialized = false
@@ -61,6 +63,21 @@ internal abstract class AbstractDirectSoftwareRedrawer(
     protected var device = 0L
 
     override suspend fun renderFrame(scope: LayerDrawScope, immediate: Boolean) = draw(scope)
+
+    override fun acquireSurface(width: Int, height: Int): Surface = synchronized(drawLock) {
+        check(!isDisposed) { "DirectSoftwareRedrawer is disposed" }
+        if (!ensureContext()) {
+            throw RenderException("Cannot init graphic context")
+        }
+        createSurface(width, height)
+        surface ?: throw RenderException("Cannot create surface for ${width}x$height")
+    }
+
+    override fun present() = synchronized(drawLock) {
+        if (!isDisposed) {
+            flushFrame()
+        }
+    }
 
     /**
      * Renders one frame. Kept `open` so the platform subclass ([LinuxSoftwareRedrawer]) can wrap the whole
@@ -104,9 +121,9 @@ internal abstract class AbstractDirectSoftwareRedrawer(
         return isContextInitialized
     }
 
-    private fun LayerDrawScope.initCanvas() {
-        val w = scaledLayerWidth
-        val h = scaledLayerHeight
+    private fun LayerDrawScope.initCanvas() = createSurface(scaledLayerWidth, scaledLayerHeight)
+
+    private fun createSurface(w: Int, h: Int) {
         if (isSizeChanged(w, h) || surface == null) {
             disposeSurface()
             if (w > 0 && h > 0) {
