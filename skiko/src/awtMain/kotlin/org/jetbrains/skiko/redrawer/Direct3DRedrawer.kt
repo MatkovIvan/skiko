@@ -53,6 +53,45 @@ internal class Direct3DRedrawer(
     override val deviceName: String?
     override val directContext: DirectContext? get() = context
 
+    /**
+     * The `IDXGIAdapter1` skiko renders on, as a native pointer. Backs the public
+     * [org.jetbrains.skiko.direct3DAdapterPointer] GPU-interop accessor. Read it under [drawLock] and after
+     * re-checking [isDisposed], so it can never race [dispose] freeing the native device.
+     *
+     * @throws IllegalStateException if this context has been disposed.
+     */
+    internal val direct3DAdapterPtr: Long
+        get() = synchronized(drawLock) {
+            check(!isDisposed) { "Direct3DRedrawer is disposed" }
+            getDirectXAdapterPointer(device)
+        }
+
+    /**
+     * The `ID3D12Device` skiko renders on, as a native pointer. Backs the public
+     * [org.jetbrains.skiko.direct3DDevicePointer] GPU-interop accessor. Same locking/lifetime discipline as
+     * [direct3DAdapterPtr].
+     *
+     * @throws IllegalStateException if this context has been disposed.
+     */
+    internal val direct3DDevicePtr: Long
+        get() = synchronized(drawLock) {
+            check(!isDisposed) { "Direct3DRedrawer is disposed" }
+            getDirectXDevicePointer(device)
+        }
+
+    /**
+     * The `ID3D12CommandQueue` skiko submits its frames on, as a native pointer. Backs the public
+     * [org.jetbrains.skiko.direct3DQueuePointer] GPU-interop accessor. Same locking/lifetime discipline as
+     * [direct3DAdapterPtr].
+     *
+     * @throws IllegalStateException if this context has been disposed.
+     */
+    internal val direct3DQueuePtr: Long
+        get() = synchronized(drawLock) {
+            check(!isDisposed) { "Direct3DRedrawer is disposed" }
+            getDirectXQueuePointer(device)
+        }
+
     init {
         val adapter = chooseAdapter(properties.adapterPriority.ordinal)
         if (adapter == 0L) {
@@ -270,4 +309,10 @@ internal class Direct3DRedrawer(
 
     // Native GPU surface flush; implemented in direct3DContext.cc.
     private external fun flush(context: Long, surface: Long)
+
+    // GPU-interop handle getters: read the IDXGIAdapter1/ID3D12Device/ID3D12CommandQueue address out of the
+    // native DirectXDevice struct. Implemented in directXRedrawer.cc.
+    private external fun getDirectXAdapterPointer(device: Long): Long
+    private external fun getDirectXDevicePointer(device: Long): Long
+    private external fun getDirectXQueuePointer(device: Long): Long
 }

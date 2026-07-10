@@ -94,6 +94,32 @@ internal class MetalRedrawer(
     override val deviceName: String? = adapter.name
     override val directContext: DirectContext? get() = context
 
+    /**
+     * The `id<MTLDevice>` skiko renders on, as a native pointer (a `__bridge`-castable address). Backs the
+     * public [org.jetbrains.skiko.metalDevicePointer] GPU-interop accessor. Read it under [drawLock] and after
+     * re-checking [isDisposed], so it can never race [dispose] freeing the native device.
+     *
+     * @throws IllegalStateException if this context has been disposed.
+     */
+    internal val metalDeviceObjcPtr: Long
+        get() = synchronized(drawLock) {
+            check(!isDisposed) { "MetalRedrawer is disposed" }
+            getMetalDevicePointer(device.ptr)
+        }
+
+    /**
+     * The `id<MTLCommandQueue>` skiko submits its frames on, as a native pointer. Backs the public
+     * [org.jetbrains.skiko.metalCommandQueuePointer] GPU-interop accessor. Same locking/lifetime discipline as
+     * [metalDeviceObjcPtr].
+     *
+     * @throws IllegalStateException if this context has been disposed.
+     */
+    internal val metalCommandQueueObjcPtr: Long
+        get() = synchronized(drawLock) {
+            check(!isDisposed) { "MetalRedrawer is disposed" }
+            getMetalCommandQueuePointer(device.ptr)
+        }
+
     init {
         val numberOfBuffers = properties.frameBuffering.numberOfBuffers() ?: 0 // zero means default for system
         val initDevice = layer.backedLayer.useDrawingSurfacePlatformInfo {
@@ -410,4 +436,9 @@ internal class MetalRedrawer(
      * Must be called on the AppKit main thread during a live resize.
      */
     private external fun finishFrameInLiveResize(device: Long)
+
+    // GPU-interop handle getters: read the id<MTLDevice>/id<MTLCommandQueue> address out of the native
+    // MetalDevice struct. Implemented in MetalRedrawer.mm.
+    private external fun getMetalDevicePointer(device: Long): Long
+    private external fun getMetalCommandQueuePointer(device: Long): Long
 }
