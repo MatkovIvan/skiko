@@ -5,6 +5,7 @@ package org.jetbrains.skiko
 import kotlinx.coroutines.delay
 import org.jetbrains.skia.BackendTexture
 import org.jetbrains.skiko.redrawer.AWTRedrawer
+import org.jetbrains.skiko.redrawer.OnScreenRedrawer
 import org.jetbrains.skiko.util.UiTestWindow
 import org.jetbrains.skiko.util.uiTest
 import org.junit.Test
@@ -88,7 +89,7 @@ class RenderContextGpuInteropTest {
             for (i in 0 until 60) {
                 window.layer.needRedraw()
                 delay(50)
-                val candidate = window.layer.renderer?.ctx
+                val candidate = (window.layer.redrawer as? OnScreenRedrawer)?.ctx
                 if (candidate is AWTRedrawer && candidate.directContext != null) {
                     ctx = candidate
                     break

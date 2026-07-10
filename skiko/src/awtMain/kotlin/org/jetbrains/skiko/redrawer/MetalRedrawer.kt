@@ -27,17 +27,19 @@ internal value class MetalDevice(val ptr: Long)
  * device/adapter lifecycle, the Skia [DirectContext] and on-screen GPU surface for the current frame, and
  * Metal's present + vsync pacing. The frame loop itself lives in the generic [OnScreenRedrawer].
  *
- * The class name is bound to its JNI symbols (`Java_org_jetbrains_skiko_redrawer_MetalRedrawer_*`) and the
- * [onOcclusionStateChanged] up-call; renaming it alone unbinds them (UnsatisfiedLinkError at runtime, not a
- * compile error).
+ * This class name is part of its JNI symbols (`Java_org_jetbrains_skiko_redrawer_MetalRedrawer_*`) and of
+ * the native occlusion up-call ([onOcclusionStateChanged]); both are name-mangled statically into the
+ * native sources. The Kotlin class name and the exported native symbols are one unit: renaming either alone unbinds
+ * them, and the failure surfaces as an UnsatisfiedLinkError at the first native call, not as a
+ * compile error.
  *
- * Content to draw is provided by [SkiaLayer.draw].
+ * Content to draw is provided by [AwtSurfaceHost.draw].
  *
  * @see "src/awtMain/objectiveC/macos/MetalRedrawerSurface.mm" -- native GPU surface implementation
  */
 internal class MetalRedrawer(
-    private val layer: SkiaLayer,
-    properties: SkiaLayerProperties
+    private val host: AwtSurfaceHost,
+    private val properties: SkiaLayerProperties
 ) : AWTRedrawer {
 
     companion object {
@@ -47,9 +49,14 @@ internal class MetalRedrawer(
     }
 
     /**
-     * Guards every native touch point. Frames render off the EDT (see [renderFrame]) while [dispose] can run
-     * on the EDT concurrently; both take this lock and re-check [isDisposed] inside it, so [dispose] can't
-     * free the native device out from under an in-flight JNI call.
+     * Guards every native/JNI touch point: device+adapter lifetime, the Skia [DirectContext]/surface, and
+     * presentation. [dispose] takes this lock before releasing any native resource, and the per-frame render
+     * path ([performFrame]) takes the *same* lock and re-checks [isDisposed] *inside* it before making any
+     * native call. Frames render off the EDT (see [renderFrame], which hops onto [dispatcherToBlockOn]) while
+     * [dispose] can be invoked from the EDT concurrently, so without this the two could interleave and
+     * [dispose] could free the native device out from under an in-flight JNI call (native use-after-free).
+     * Because both sides serialize on [drawLock], whichever runs first fully completes before the other
+     * proceeds, and the loser always observes the up-to-date [isDisposed] state.
      */
     private val drawLock = Any()
 
@@ -57,7 +64,7 @@ internal class MetalRedrawer(
     private var isDisposed = false
 
     /**
-     * [MetalDevice] initialized for given [layer] or null if [MetalRedrawer] is disposed,
+     * [MetalDevice] initialized for the given [host] or null if [MetalRedrawer] is disposed,
      * so future calls of [device] will throw exception
      */
     private var _device: MetalDevice?
@@ -70,7 +77,7 @@ internal class MetalRedrawer(
         }
 
     private val adapter = chooseMetalAdapter(properties.adapterPriority)
-    private val vSyncer = if (properties.isVsyncEnabled) MetalVSyncer(layer.windowHandle) else null
+    private val vSyncer = if (properties.isVsyncEnabled) MetalVSyncer(host.windowHandle) else null
 
     private val windowOcclusionStateChannel = Channel<Boolean>(Channel.CONFLATED)
     @Volatile private var isWindowOccluded = false
@@ -84,7 +91,8 @@ internal class MetalRedrawer(
     /** The loop's frame entry points; see [attachFrameHost]. Only used while [isInLiveResize]. */
     private var frameHost: FrameHost? = null
 
-    // GPU surface for the current frame; only touched under `drawLock`.
+    // GPU surface for the current frame.
+    // Only ever touched under `drawLock`.
     private var context: DirectContext? = null
     private var renderTarget: BackendRenderTarget? = null
     private var surface: Surface? = null
@@ -122,17 +130,17 @@ internal class MetalRedrawer(
 
     init {
         val numberOfBuffers = properties.frameBuffering.numberOfBuffers() ?: 0 // zero means default for system
-        val initDevice = layer.backedLayer.useDrawingSurfacePlatformInfo {
+        val initDevice = host.backedLayer.useDrawingSurfacePlatformInfo {
             MetalDevice(
                 createMetalDevice(
-                    window = layer.windowHandle,
-                    transparency = layer.transparency,
+                    window = host.windowHandle,
+                    transparency = host.transparency,
                     frameBuffering = numberOfBuffers,
                     adapter = adapter.ptr,
                     platformInfo = it,
-                    // Live resize is driven from the window, so only enable it when this layer covers the whole
+                    // Live resize is driven from the window, so only enable it when the surface covers the whole
                     // window. When embedded as a Swing component (fillsWindow = false), fall back to the legacy path.
-                    liveResizeEnabled = layer.fillsWindow && SkikoProperties.metalSynchronousLiveResize
+                    liveResizeEnabled = host.fillsWindow && SkikoProperties.metalSynchronousLiveResize
                 )
             )
         }
@@ -141,11 +149,11 @@ internal class MetalRedrawer(
     }
 
     override val renderInfo: String
-        get() = renderInfoHeader(layer.renderApi) +
+        get() = renderInfoHeader(host.renderApi) +
                 "Video card: ${adapter.name}\n" +
                 "Total VRAM: ${adapter.memorySize / 1024 / 1024} MB\n"
 
-    override fun isTransparentBackgroundSupported(): Boolean = defaultIsTransparentBackgroundSupported(layer)
+    override fun isTransparentBackgroundSupported(): Boolean = defaultIsTransparentBackgroundSupported(host)
 
     // Metal splits non-vsync-throttled updates onto a separate ticker for input latency.
     override val separatesUpdateAndDraw: Boolean get() = true
@@ -199,6 +207,8 @@ internal class MetalRedrawer(
     }
 
     private fun performFrame(scope: LayerDrawScope, finishFrame: Boolean = true) = synchronized(drawLock) {
+        // Re-check inside the lock (not just at the call site): this is what makes `dispose` and an
+        // in-flight frame mutually exclusive rather than merely racing on `isDisposed`.
         if (!isDisposed) {
             autoreleasepool {
                 with(scope) { drawFrame() }
@@ -296,7 +306,7 @@ internal class MetalRedrawer(
         createSurface(scaledLayerWidth, scaledLayerHeight, pixelGeometry)
         canvas?.runRestoringState {
             clear(Color.TRANSPARENT)
-            layer.draw(this)
+            host.draw(this)
         }
         surface?.flushAndSubmit()
         // Recording only. The caller presents via `finishFrame` or, during a live resize,
@@ -311,7 +321,7 @@ internal class MetalRedrawer(
         if (!ensureContext()) {
             throw RenderException("Cannot init graphic Metal context")
         }
-        createSurface(width, height, layer.pixelGeometry)
+        createSurface(width, height, host.pixelGeometry)
         surface ?: throw RenderException("Cannot create surface for ${width}x$height")
     }
 
@@ -327,7 +337,7 @@ internal class MetalRedrawer(
             try {
                 val newContext = DirectContext(makeMetalContext(device.ptr))
                 context = newContext
-                onContextInitialized(newContext, layer.properties.gpuResourceCacheLimit) { renderInfo }
+                onContextInitialized(newContext, properties.gpuResourceCacheLimit) { renderInfo }
             } catch (e: Exception) {
                 Logger.warn(e) { "Failed to create Skia Metal context!" }
                 return false
@@ -369,21 +379,26 @@ internal class MetalRedrawer(
 
     override fun syncBounds() = synchronized(drawLock) {
         check(isEventDispatchThread()) { "Method should be called from AWT event dispatch thread" }
+        // During a live resize the window, not AWT, dictates the layer geometry; adopting AWT's lagging
+        // bounds here would fight the resize transaction.
         if (isInLiveResize) return
 
-        val rootPane = getRootPane(layer)
-        val globalPosition = convertPoint(layer.backedLayer, 0, 0, rootPane)
-        setContentScale(device.ptr, layer.contentScale)
+        val backedLayer = host.backedLayer
+        val rootPane = getRootPane(backedLayer)
+        val globalPosition = convertPoint(backedLayer, 0, 0, rootPane)
+        setContentScale(device.ptr, host.contentScale)
         val x = globalPosition.x
-        val y = rootPane.height - globalPosition.y - layer.height
-        val width = layer.backedLayer.width.coerceAtLeast(0)
-        val height = layer.backedLayer.height.coerceAtLeast(0)
+        val y = rootPane.height - globalPosition.y - host.height
+        val width = backedLayer.width.coerceAtLeast(0)
+        val height = backedLayer.height.coerceAtLeast(0)
         Logger.debug { "MetalRedrawer#resizeLayers $this {x: $x y: $y width: $width height: $height} rootPane: ${rootPane.size}" }
         resizeLayers(device.ptr, x, y, width, height)
     }
 
     override fun setVisible(isVisible: Boolean) = synchronized(drawLock) {
         Logger.debug { "MetalRedrawer#setVisible($isVisible)" }
+        // `dispose` may run concurrently with this (both take `drawLock`); once disposed there is no
+        // native device left to touch.
         if (!isDisposed) {
             setLayerVisible(device.ptr, isVisible)
         }
@@ -413,7 +428,7 @@ internal class MetalRedrawer(
     private external fun invokeOnEventThreadAndWait(runnable: Runnable, component: Component)
 
     private fun invokeOnEventThreadAndWait(runnable: Runnable) {
-        invokeOnEventThreadAndWait(runnable, layer)
+        invokeOnEventThreadAndWait(runnable, host.backedLayer)
     }
 
     /**

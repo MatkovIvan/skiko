@@ -11,9 +11,14 @@ import java.awt.Dimension
  * Skia `DirectContext` and the frame's surface, the present/swap, and its own pacing. The frame loop is not
  * here — [OnScreenRedrawer] drives every backend through the hooks below.
  *
- * It extends the public [RenderContext] (its acquireSurface/present/directContext/graphicsApi are the
- * view-decoupled primitive); the members below are the AWT on-screen hooks only [OnScreenRedrawer] uses, so
- * one per-API class backs both the standalone context and skiko's loop.
+ * It extends the public, cross-platform [RenderContext]: the [acquireSurface][RenderContext.acquireSurface] /
+ * [present][RenderContext.present] / [directContext][RenderContext.directContext] /
+ * [graphicsApi][RenderContext.graphicsApi] members are the view-decoupled primitive a standalone consumer can
+ * drive itself. These per-API contexts depend on the decoupled [AwtSurfaceHost] seam rather than a
+ * concrete `SkiaLayer`; the genuinely view-less public entry point is `RenderContext.createOffscreen(…)`,
+ * while the extra members declared here ([renderFrame], the pacing hooks, [syncBounds]/[setVisible], the
+ * frame-scheduling interception seam) are the AWT on-screen hooks that only [OnScreenRedrawer] uses. The same
+ * per-API class therefore backs both the standalone-context conformance and skiko's internal on-screen loop.
  *
  * Every native touch point is guarded by the implementation's own `drawLock`; [dispose] re-checks a disposed
  * flag inside that lock.

@@ -18,16 +18,19 @@ import java.lang.ref.Reference
  * by overriding [draw]/[resize]/[finishFrame]/[dispose] (Linux); [renderFrame] and the synchronous
  * `renderImmediately` path both flow through [draw], so the subclass only needs to wrap it once.
  *
- * Content to draw is provided by [SkiaLayer.draw].
+ * Content to draw is provided by [AwtSurfaceHost.draw].
  */
 internal abstract class AbstractDirectSoftwareRedrawer(
-    private val layer: SkiaLayer,
+    private val host: AwtSurfaceHost,
     private val properties: SkiaLayerProperties
 ) : AWTRedrawer {
 
     /**
-     * Guards the native device and the raster [surface]/[canvas]. Frame loop and [dispose] both run on the
-     * EDT here, so they can't actually race; the lock is kept for uniformity with the off-EDT backends.
+     * Guards the native device and the raster [surface]/[canvas], mirroring the `drawLock` discipline in
+     * [MetalRedrawer]/[SoftwareRedrawer]: [dispose] takes it before releasing any native resource, and the
+     * per-frame render path ([performDraw]) takes the same lock and re-checks [isDisposed] inside it before
+     * touching them. On this backend the frame loop and [dispose] both always run on the EDT; the lock still
+     * guards them so every backend enforces the same discipline, whether or not it renders off the EDT.
      */
     private val drawLock = Any()
 
@@ -39,7 +42,8 @@ internal abstract class AbstractDirectSoftwareRedrawer(
     // Direct software rasterizes on the CPU into a native window-backed raster surface: no Ganesh DirectContext.
     override val directContext: DirectContext? get() = null
 
-    // Raster surface for the current frame, recreated on resize; only touched under `drawLock`.
+    // Raster surface for the current frame; recreated when the frame size changes.
+    // Only ever touched under `drawLock`.
     private var isContextInitialized = false
     private var surface: Surface? = null
     private var canvas: Canvas? = null
@@ -47,12 +51,12 @@ internal abstract class AbstractDirectSoftwareRedrawer(
     private var currentHeight = 0
 
     override val renderInfo: String
-        get() = renderInfoHeader(layer.renderApi)
+        get() = renderInfoHeader(host.renderApi)
 
-    override fun isTransparentBackgroundSupported(): Boolean = defaultIsTransparentBackgroundSupported(layer)
+    override fun isTransparentBackgroundSupported(): Boolean = defaultIsTransparentBackgroundSupported(host)
 
     private val frameJob = Job()
-    private val frameLimiter = layerFrameLimiter(CoroutineScope(frameJob), layer.backedLayer)
+    private val frameLimiter = layerFrameLimiter(CoroutineScope(frameJob), host.backedLayer)
 
     override suspend fun paceBeforeFrame() {
         if (properties.isVsyncEnabled && properties.isVsyncFramelimitFallbackEnabled) {
@@ -96,6 +100,8 @@ internal abstract class AbstractDirectSoftwareRedrawer(
     }
 
     private fun performDraw(scope: LayerDrawScope) = synchronized(drawLock) {
+        // Re-check inside the lock (not just at the call site), matching MetalRedrawer/SoftwareRedrawer:
+        // this is what makes `dispose` and an in-flight frame mutually exclusive.
         if (!isDisposed) {
             with(scope) { drawFrame() }
         }
@@ -108,7 +114,7 @@ internal abstract class AbstractDirectSoftwareRedrawer(
         initCanvas()
         canvas?.runRestoringState {
             clear(Color.TRANSPARENT)
-            layer.draw(this)
+            host.draw(this)
         }
         flushFrame()
     }

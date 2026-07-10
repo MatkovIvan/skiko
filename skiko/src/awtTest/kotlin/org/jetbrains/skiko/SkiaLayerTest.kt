@@ -15,7 +15,7 @@ import org.jetbrains.skiko.redrawer.AWTRedrawer
 import org.jetbrains.skiko.redrawer.MetalRedrawer
 import org.jetbrains.skiko.redrawer.MetalVSyncer
 import org.jetbrains.skiko.redrawer.OnScreenRedrawer
-import org.jetbrains.skiko.redrawer.SoftwareRedrawer
+import org.jetbrains.skiko.redrawer.createRedrawer
 import org.jetbrains.skiko.redrawer.defaultIsTransparentBackgroundSupported
 import org.jetbrains.skiko.swing.SkiaSwingLayer
 import org.jetbrains.skiko.util.ScreenshotTestRule
@@ -645,7 +645,7 @@ class SkiaLayerTest {
         nonSoftware: (SkiaLayer, GraphicsApi, SkiaLayerProperties) -> AWTRedrawer
     ): RenderFactory = RenderFactory { layer, renderApi, analytics, properties ->
         val backend = if (renderApi == GraphicsApi.SOFTWARE_COMPAT) {
-            SoftwareRedrawer(layer, properties)
+            createRedrawer(layer, renderApi, properties)
         } else {
             nonSoftware(layer, renderApi, properties)
         }

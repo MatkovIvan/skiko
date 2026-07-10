@@ -3,18 +3,17 @@ package org.jetbrains.skiko.redrawer
 import org.jetbrains.skia.impl.interopScope
 import org.jetbrains.skia.impl.InteropPointer
 import org.jetbrains.skia.SurfaceProps
-import org.jetbrains.skiko.SkiaLayer
 import org.jetbrains.skiko.SkiaLayerProperties
 import org.jetbrains.skiko.RenderException
 
 internal class WindowsSoftwareRedrawer(
-    layer: SkiaLayer,
+    host: AwtSurfaceHost,
     properties: SkiaLayerProperties
-) : AbstractDirectSoftwareRedrawer(layer, properties) {
+) : AbstractDirectSoftwareRedrawer(host, properties) {
 
     init {
         device = interopScope {
-            createDevice(layer.contentHandle, toInterop(SurfaceProps(pixelGeometry = layer.pixelGeometry).packToIntArray()), layer.transparency).also {
+            createDevice(host.contentHandle, toInterop(SurfaceProps(pixelGeometry = host.pixelGeometry).packToIntArray()), host.transparency).also {
                 if (it == 0L) {
                     throw RenderException("Failed to create Software device")
                 }

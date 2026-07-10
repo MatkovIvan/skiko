@@ -16,10 +16,10 @@ import org.jetbrains.skiko.*
  * never run concurrently. Only the [dwmFlush] vsync wait is moved off the EDT, and it touches no GL resource
  * that [dispose] frees.
  *
- * Content to draw is provided by [SkiaLayer.draw].
+ * Content to draw is provided by [AwtSurfaceHost.draw].
  */
 internal class WindowsOpenGLRedrawer(
-    private val layer: SkiaLayer,
+    private val host: AwtSurfaceHost,
     private val properties: SkiaLayerProperties
 ) : AWTRedrawer {
     init {
@@ -29,7 +29,7 @@ internal class WindowsOpenGLRedrawer(
     @Volatile
     private var isDisposed = false
 
-    private val device: Long = layer.backedLayer.useDrawingSurfacePlatformInfo {
+    private val device: Long = host.backedLayer.useDrawingSurfacePlatformInfo {
         getDevice(it).also { devicePtr ->
             check(devicePtr != 0L) { "Can't get device" }
         }
@@ -40,7 +40,7 @@ internal class WindowsOpenGLRedrawer(
         private set
     override val directContext: DirectContext? get() = glContext
 
-    private val context = createContext(device, layer.contentHandle, layer.transparency).also {
+    private val context = createContext(device, host.contentHandle, host.transparency).also {
         if (it == 0L) {
             throw RenderException("Cannot create Windows GL context")
         }
@@ -66,13 +66,13 @@ internal class WindowsOpenGLRedrawer(
     override val renderInfo: String
         get() {
             val gl = OpenGLApi.instance
-            return renderInfoHeader(layer.renderApi) +
+            return renderInfoHeader(host.renderApi) +
                     "Vendor: ${gl.glGetString(gl.GL_VENDOR)}\n" +
                     "Model: ${gl.glGetString(gl.GL_RENDERER)}\n" +
                     "Total VRAM: ${gl.glGetIntegerv(gl.GL_TOTAL_MEMORY) / 1024} MB\n"
         }
 
-    override fun isTransparentBackgroundSupported(): Boolean = defaultIsTransparentBackgroundSupported(layer)
+    override fun isTransparentBackgroundSupported(): Boolean = defaultIsTransparentBackgroundSupported(host)
 
     init {
         makeCurrent()
@@ -118,7 +118,7 @@ internal class WindowsOpenGLRedrawer(
         if (!ensureContext()) {
             throw RenderException("Cannot init graphic context")
         }
-        createSurface(width, height, layer.pixelGeometry)
+        createSurface(width, height, host.pixelGeometry)
         return surface ?: throw RenderException("Cannot create surface for ${width}x$height")
     }
 
@@ -137,7 +137,7 @@ internal class WindowsOpenGLRedrawer(
         initSurface()
         canvas?.runRestoringState {
             clear(Color.TRANSPARENT)
-            layer.draw(this)
+            host.draw(this)
         }
         glContext?.flush()
     }
@@ -147,7 +147,7 @@ internal class WindowsOpenGLRedrawer(
             try {
                 val newContext = makeGLContext()
                 glContext = newContext
-                onContextInitialized(newContext, layer.properties.gpuResourceCacheLimit) { renderInfo }
+                onContextInitialized(newContext, properties.gpuResourceCacheLimit) { renderInfo }
             } catch (e: Exception) {
                 Logger.warn(e) { "Failed to create Skia OpenGL context!" }
                 return false

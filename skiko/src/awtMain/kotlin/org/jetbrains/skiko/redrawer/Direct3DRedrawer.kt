@@ -14,23 +14,30 @@ import java.lang.ref.Reference
  * surfaces for the current frame, and the present/swap (with vsync fused into the swap). The frame loop
  * itself lives in the generic [OnScreenRedrawer].
  *
- * The class name is bound to its statically name-mangled JNI symbols; renaming it alone unbinds them
- * (UnsatisfiedLinkError at runtime, not a compile error).
+ * This class name is part of its statically name-mangled JNI symbols. The Kotlin class name and the exported native symbols are one unit: renaming either alone unbinds
+ * them, and the failure surfaces as an UnsatisfiedLinkError at the first native call, not as a
+ * compile error.
  *
- * Content to draw is provided by [SkiaLayer.draw].
+ * Content to draw is provided by [AwtSurfaceHost.draw].
  *
  * @see "src/awtMain/cpp/windows/direct3DContext.cc" -- native GPU surface implementation
  * @see "src/awtMain/cpp/windows/directXRedrawer.cc" -- native device/swap chain implementation
  */
 internal class Direct3DRedrawer(
-    private val layer: SkiaLayer,
+    private val host: AwtSurfaceHost,
     private val properties: SkiaLayerProperties
 ) : AWTRedrawer {
 
     /**
-     * Guards every native touch point. Frames render off the EDT (see [renderFrame]) while [dispose] can run
-     * on the EDT concurrently; both take this lock and re-check [isDisposed] inside it, so [dispose] can't
-     * free the native device out from under an in-flight JNI call.
+     * Guards every native/JNI touch point: device+adapter lifetime, the swap chain, the Skia
+     * [DirectContext]/surfaces, and presentation. [dispose] takes this lock before releasing any native
+     * resource, and the per-frame render path ([drawAndSwap]) takes the *same* lock and re-checks
+     * [isDisposed] *inside* it before making any native call. Frames render off the EDT (see [renderFrame],
+     * which hops onto [dispatcherToBlockOn]) while [dispose] can be invoked from the EDT concurrently, so
+     * without this the two could interleave and [dispose] could free the native device out from under an
+     * in-flight JNI call (native use-after-free). Because both sides serialize on [drawLock], whichever runs
+     * first fully completes before the other proceeds, and the loser always observes the up-to-date
+     * [isDisposed] state.
      */
     private val drawLock = Any()
 
@@ -100,18 +107,19 @@ internal class Direct3DRedrawer(
         adapterName = getAdapterName(adapter)
         adapterMemorySize = getAdapterMemorySize(adapter)
         deviceName = adapterName
-        device = createDirectXDevice(adapter, layer.contentHandle, layer.transparency)
+        device = createDirectXDevice(adapter, host.contentHandle, host.transparency)
             .takeIf { it != 0L } ?: throw RenderException("Failed to create DirectX12 device.")
     }
 
     override val renderInfo: String
-        get() = renderInfoHeader(layer.renderApi) +
+        get() = renderInfoHeader(host.renderApi) +
                 "Video card: $adapterName\n" +
                 "Total VRAM: ${adapterMemorySize / 1024 / 1024} MB\n"
 
-    override fun isTransparentBackgroundSupported(): Boolean = defaultIsTransparentBackgroundSupported(layer)
+    override fun isTransparentBackgroundSupported(): Boolean = defaultIsTransparentBackgroundSupported(host)
 
-    // GPU surfaces for the current frame; only touched under `drawLock`.
+    // GPU surfaces for the current frame.
+    // Only ever touched under `drawLock`.
     private var context: DirectContext? = null
     private val bufferCount = 2
     private val surfaces: Array<Surface?> = arrayOfNulls(bufferCount)
@@ -142,6 +150,8 @@ internal class Direct3DRedrawer(
     }
 
     private fun drawAndSwap(scope: LayerDrawScope, withVsync: Boolean) = synchronized(drawLock) {
+        // Re-check inside the lock (not just at the call site): this is what makes `dispose` and an
+        // in-flight frame mutually exclusive rather than merely racing on `isDisposed`.
         if (isDisposed) {
             return
         }
@@ -154,7 +164,7 @@ internal class Direct3DRedrawer(
         if (!ensureContext()) {
             throw RenderException("Cannot init graphic Direct3D context")
         }
-        createSurface(width, height, layer.pixelGeometry)
+        createSurface(width, height, host.pixelGeometry)
         // Capture the frame's back buffer, exactly as the on-screen path does in `initSurface` and for the
         // same reason: `getBufferIndex` advances the swap chain and waits on the buffer's fence, so it runs
         // once per frame and [present] must flush the surface it returned, not call it again.
@@ -176,7 +186,7 @@ internal class Direct3DRedrawer(
         initSurface()
         canvas?.runRestoringState {
             clear(Color.TRANSPARENT)
-            layer.draw(this)
+            host.draw(this)
         }
         flushFrame()
     }
@@ -186,7 +196,7 @@ internal class Direct3DRedrawer(
             try {
                 val newContext = DirectContext(makeDirectXContext(device))
                 context = newContext
-                onContextInitialized(newContext, layer.properties.gpuResourceCacheLimit) { renderInfo }
+                onContextInitialized(newContext, properties.gpuResourceCacheLimit) { renderInfo }
             } catch (e: Exception) {
                 Logger.warn(e) { "Failed to create Skia Direct3D context!" }
                 return false
@@ -275,7 +285,7 @@ internal class Direct3DRedrawer(
 
     private fun changeSize(width: Int, height: Int): Boolean {
         return if (!isSwapChainInitialized) {
-            initSwapChain(device, width, height, layer.transparency)
+            initSwapChain(device, width, height, host.transparency)
             isSwapChainInitialized = true
             true
         } else {

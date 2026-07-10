@@ -16,13 +16,16 @@ import java.awt.image.*
  * An optional software frame limiter runs in [paceBeforeFrame].
  */
 internal class SoftwareRedrawer(
-    private val layer: SkiaLayer,
+    private val host: AwtSurfaceHost,
     properties: SkiaLayerProperties
 ) : AWTRedrawer {
 
     /**
-     * Guards the CPU-backed [storage]/[canvas] surface. Frame loop and [dispose] both run on the EDT here, so
-     * they can't actually race; the lock is kept for uniformity with the off-EDT backends like [MetalRedrawer].
+     * Guards the CPU-backed [storage]/[canvas] surface, mirroring the `drawLock` discipline in
+     * [MetalRedrawer]: [dispose] takes it before releasing [storage], and the per-frame render path
+     * ([performDraw]) takes the same lock and re-checks [isDisposed] inside it before touching [storage].
+     * On this backend the frame loop and [dispose] both always run on the EDT; the lock still guards them
+     * so every backend enforces the same discipline, whether or not it renders off the EDT.
      */
     private val drawLock = Any()
 
@@ -51,11 +54,11 @@ internal class SoftwareRedrawer(
     private var standaloneHeight = 0
 
     override val renderInfo: String
-        get() = renderInfoHeader(layer.renderApi)
+        get() = renderInfoHeader(host.renderApi)
 
     private val frameJob = if (properties.isVsyncEnabled && properties.isVsyncFramelimitFallbackEnabled) Job() else null
     private val frameLimiter = frameJob?.let {
-        layerFrameLimiter(CoroutineScope(it), layer.backedLayer)
+        layerFrameLimiter(CoroutineScope(it), host.backedLayer)
     }
 
     override suspend fun paceBeforeFrame() {
@@ -109,6 +112,8 @@ internal class SoftwareRedrawer(
     }
 
     private fun performDraw(scope: LayerDrawScope) = synchronized(drawLock) {
+        // Re-check inside the lock (not just at the call site), matching MetalRedrawer: this is what makes
+        // `dispose` and an in-flight frame mutually exclusive.
         if (!isDisposed) {
             with(scope) { drawFrame() }
         }
@@ -119,7 +124,7 @@ internal class SoftwareRedrawer(
         initCanvas()
         canvas?.runRestoringState {
             clear(org.jetbrains.skia.Color.TRANSPARENT)
-            layer.draw(this)
+            host.draw(this)
         }
         flushFrame()
     }
@@ -163,12 +168,12 @@ internal class SoftwareRedrawer(
                 null
             )
             val image = BufferedImage(colorModel, raster, false, null)
-            val graphics = layer.backedLayer.graphics
-            if (!layer.fullscreen && layer.transparency && hostOs == OS.MacOS) {
+            val graphics = host.backedLayer.graphics
+            if (!host.fullscreen && host.transparency && hostOs == OS.MacOS) {
                 graphics?.color = Color(0, 0, 0, 0)
                 graphics?.clearRect(0, 0, w, h)
             }
-            graphics?.drawImage(image, 0, 0, layer.width, layer.height, null)
+            graphics?.drawImage(image, 0, 0, host.width, host.height, null)
         }
     }
 }
